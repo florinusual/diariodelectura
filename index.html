@@ -1209,7 +1209,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     if (ui.msg) h += '<p class="msg">' + esc(ui.msg) + "</p>";
     h += "</div>";
     var csrc = e.removeCover ? "" : (e.coverData || COV[e.id] || "");
-    h += '<div class="coverrow"><div class="cov c-' + esc(e.color) + '" style="' + bgStyle(e) + '">' + (csrc ? '<img src="' + csrc + '" alt="Portada">' : "Sin portada") + '</div><div class="stack" style="flex:1;min-width:0;gap:8px">' +
+    h += '<div class="coverrow"><div class="cov c-' + esc(e.color) + '" style="' + bgStyle(e) + '">' + (csrc ? '<img src="' + csrc + '" alt="Portada">' : (ui.busy === "cover" ? "Bajando portada…" : "Sin portada")) + '</div><div class="stack" style="flex:1;min-width:0;gap:8px">' +
       '<button type="button" class="btn block" data-act="pick-cover">' + (csrc ? "Cambiar foto" : "Foto de portada") + "</button>";
     if (e.coverBlob && sampleImg) h += '<button type="button" class="btn ghost block" data-act="ocr-cover"' + (ui.busy ? " disabled" : "") + ">" + (ui.busy === "ocr" ? "Leyendo…" : "Leer título y autor") + "</button>";
     if (csrc) h += '<button type="button" class="btn ghost block" data-act="rm-cover">Quitar portada</button>';
@@ -1294,13 +1294,14 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   }
   function normIsbn(s) { var v = validIsbn(String(s || "")); return v ? isbn13(v) : String(s || "").trim(); }
   function isbnLabel(s) { var t = isbn10(s); return esc(s) + (t ? ' <span class="meta">· ISBN-10: ' + t + "</span>" : ""); }
-  function shrink(file, cb) {
+  function shrink(file, cb, fail) {
     var fr = new FileReader();
-    fr.onerror = function () { toast("No pude leer esa foto"); };
+    fr.onerror = fail || function () { toast("No pude leer esa foto"); };
     fr.onload = function () {
       var im = new Image();
-      im.onerror = function () { toast("No pude abrir esa imagen"); };
+      im.onerror = fail || function () { toast("No pude abrir esa imagen"); };
       im.onload = function () {
+        if (fail && (im.width < 40 || im.height < 40)) { fail(); return; }
         function draw(max) {
           var sc = Math.min(1, max / Math.max(im.width, im.height)), c = document.createElement("canvas");
           c.width = Math.round(im.width * sc); c.height = Math.round(im.height * sc);
@@ -1447,9 +1448,21 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     h += "<span class='tag' style='align-self:flex-start;margin-top:4px'>" + esc(c.src || "") + "</span></div></div></div>";
     if (c.resumen) h += "<p class='msg clamp' style='font-size:12.5px;margin-top:12px'>" + esc(c.resumen) + "</p>";
     if (!img) h += "<p class='msg' style='margin-top:10px'>Esta fuente no trae portada.</p>";
-    h += "<div class='stack' style='margin-top:14px'><button class='btn primary block' data-act='cand-yes'>Sí, llenar con estos datos</button><button class='btn ghost block' data-act='cand-no'>" + (ui.picks ? "No es este, volver a la lista" : "No es este") + "</button></div>";
+    h += "<div class='stack' style='margin-top:14px'><button class='btn primary block' data-act='cand-yes'>" + (img && ui.edit && ui.edit.kind !== "wish" && !coverIn(ui.edit) ? "Sí, usar estos datos y la portada" : "Sí, llenar con estos datos") + "</button><button class='btn ghost block' data-act='cand-no'>" + (ui.picks ? "No es este, volver a la lista" : "No es este") + "</button></div>";
     openSheet(h);
   }
+  /* Baja la portada del libro elegido para guardarla; si el sitio no deja leerla, la pide a través de wsrv.nl. */
+  function fetchCover(url) {
+    var u = url.replace(/-[SM]\.jpg/, "-L.jpg").replace("&edge=curl", ""), via = "https://wsrv.nl/?url=" + encodeURIComponent(u) + "&output=jpg";
+    function get(x) {
+      return fetch(x, { mode: "cors" }).then(function (r) { if (!r.ok) throw { code: "cover" }; return r.blob(); })
+        .then(function (b) { if (!/^image\//.test(b.type) || b.size < 1000) throw { code: "cover" }; return b; });
+    }
+    return get(u).catch(function () { return get(via); }).then(function (b) {
+      return new Promise(function (ok, no) { shrink(b, function (small, blob, col) { ok({ small: small, blob: blob, col: col }); }, no); });
+    });
+  }
+  function coverIn(e) { return !!(e.coverData || (COV[e.id] && !e.removeCover)); }
   function applyCand(c) {
     var e = ui.edit;
     e.title = c.titulo; if (c.autor) e.author = c.autor; if (c.paginas) e.pages = +c.paginas || e.pages;
@@ -1658,8 +1671,25 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
       case "cand-yes":
         var cy = ui.cand; ui.cand = null; ui.picks = null;
         if (!cy || !ui.edit) break;
+        var ed = ui.edit, curl = cy.coverL || cy.cover, keep = coverIn(ed);
         ui.msg = (ui.convMsg || "") + applyCand(cy); ui.convMsg = "";
-        reopen(); break;
+        if (ed.kind === "wish" || !curl) { reopen(); break; }
+        if (keep) { ui.msg += " Conservé la portada que ya tenías."; reopen(); break; }
+        ui.busy = "cover"; reopen();
+        fetchCover(curl).then(function (r) {
+          if (ui.edit !== ed) return;
+          readEdit();
+          ed.coverData = r.small; ed.coverBlob = r.blob; ed.removeCover = false;
+          if (r.col) { ed.ccolor = r.col; ed.spine = r.col; }
+          ui.busy = ""; ui.msg += " La portada se guardará con el libro.";
+          if ($("#bt")) reopen();
+        }).catch(function () {
+          if (ui.edit !== ed) return;
+          readEdit();
+          ui.busy = ""; ui.msg += " No pude bajar la portada: puedes tomarle una foto con “Foto de portada”.";
+          if ($("#bt")) reopen();
+        });
+        break;
       case "cand-no":
         ui.cand = null;
         if (ui.picks) { pickSheet(ui.pickQ || ""); break; }
