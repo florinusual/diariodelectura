@@ -334,6 +334,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   var S = loadLocal() || seed();
   var COV = loadCovers(), coversRef = null, sampleImg = false;
   var ui = { sect: "mis", wordBook: "", fragBook: "", fdel: "", view: "estante", busy: "", msg: "", tab: "libros", filter: "todos", sheet: null, edit: null, confirm: false, q: "", result: null, loading: false, err: "", dictBook: "", wordFilter: "", ctl: null };
+  var inClaude = !!(window.claude && window.claude.use);
   var docRef = null, sample = null, saving = false, dirty = false, saveT = null, wake = null, toastT = null;
 
   function $(s) { return document.querySelector(s); }
@@ -607,7 +608,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
 
   function vFragTab() { return "<h1>Fragmentos</h1>" + vFrag(); }
   function vLibros() {
-    var h = "<h1>Biblioteca</h1>" + sectSeg();
+    var h = "<h1>Biblioteca</h1>" + installNote() + sectSeg();
     if (ui.sect === "deseos") return h + vDeseos();
     if (ui.sect === "sagas") return h + vSagas();
     return h + vMis();
@@ -671,6 +672,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     if (r.idioma && !ed.lang) ed.lang = String(r.idioma);
     if (r.publicacion && !ed.pub) ed.pub = String(r.publicacion);
     if (r.genero && !ed.genre) ed.genre = String(r.genero);
+    if (r.editorial && !ed.editorial) ed.editorial = String(r.editorial);
     if (r.resumen && !ed.summary) ed.summary = String(r.resumen);
   }
   function fragCard(f, bookId) {
@@ -723,14 +725,14 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   }
 
   function wishSheet() {
-    var e = ui.edit, isNew = !e.id, off = (!sample || ui.busy) ? " disabled" : "";
+    var e = ui.edit, isNew = !e.id, off = (!canFind() || ui.busy) ? " disabled" : "";
     var h = "<h2>" + (isNew ? "Libro deseado" : "Editar deseo") + '</h2><div class="stack">';
     h += '<div class="field"><label class="label" for="bi">ISBN</label><div class="row"><input id="bi" type="text" inputmode="numeric" placeholder="978…" value="' + esc(e.isbn) + '"><button type="button" class="btn" data-act="isbn-search"' + off + ' style="flex:none">' + (ui.busy === "isbn" ? "Buscando…" : "Buscar") + "</button></div>";
     if (ui.msg) h += '<p class="msg">' + esc(ui.msg) + "</p>";
     h += "</div>";
     h += '<div class="field"><label class="label" for="bt">Título</label><input id="bt" data-focus type="text" value="' + esc(e.title) + '"></div>';
     h += '<div class="field"><label class="label" for="ba">Autor</label><input id="ba" type="text" value="' + esc(e.author) + '"></div>';
-    h += '<button type="button" class="btn block" data-act="title-search"' + (!sample || ui.busy ? " disabled" : "") + '>' + (ui.busy === "title" ? "Buscando…" : "Buscar por título y autor") + "</button>";
+    h += '<button type="button" class="btn block" data-act="title-search"' + (!canFind() || ui.busy ? " disabled" : "") + '>' + (ui.busy === "title" ? "Buscando…" : "Buscar por título y autor") + "</button>";
     h += '<div class="field"><label class="label" for="bp">Páginas</label><input id="bp" type="number" inputmode="numeric" min="0" value="' + (e.pages || "") + '"></div>';
     h += infoMeta(e);
     h += sagaFields(e);
@@ -1061,7 +1063,64 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
       });
       h += "</div>";
     } else if (sy) h += '<div class="empty"><b>Sin sesiones en ' + sy + "</b>Aquí aparecerán los libros que leas ese año.</div>";
+    return h + appBlock();
+  }
+
+  /* ---------- app instalable y respaldo ---------- */
+  var LSI = "diario-lectura-install-hidden";
+  function standalone() { try { return matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; } catch (e) { return false; } }
+  function iosHint() { return /iP(hone|ad|od)/.test(navigator.userAgent) && !standalone(); }
+  function installOffer() { return !inClaude && !standalone() && (ui.installEvt || iosHint()); }
+  function installText() { return ui.installEvt ? "Instala el Diario en tu dispositivo para abrirlo como app, incluso sin conexión." : "Para instalarlo en tu iPhone: abre esta página en Safari, toca Compartir y luego “Agregar a inicio”."; }
+  function installNote() {
+    var hidden = false; try { hidden = !!localStorage.getItem(LSI); } catch (e) {}
+    if (hidden || !installOffer()) return "";
+    return '<div class="note"><span>' + installText() + '</span><span class="row" style="gap:2px">' + (ui.installEvt ? '<button data-act="install">Instalar</button>' : "") + '<button data-act="install-hide" aria-label="Ocultar aviso">✕</button></span></div>';
+  }
+  function appBlock() {
+    var h = "";
+    if (installOffer()) h += '<h2 style="margin-top:28px">Instalar</h2><div class="card stack"><p class="msg" style="font-size:12.5px">' + installText() + "</p>" + (ui.installEvt ? '<button class="btn primary block" data-act="install">Instalar app</button>' : "") + "</div>";
+    h += '<h2 style="margin-top:28px">Copia de seguridad</h2><div class="card stack"><p class="msg" style="font-size:12.5px">Descarga un archivo con tus libros, sesiones, palabras, deseos, sagas y portadas. Sirve para pasar tus datos a otro dispositivo o a la app instalada.</p>';
+    h += '<button class="btn block" data-act="backup">Descargar respaldo</button>';
+    h += '<button class="btn ghost block" data-act="restore-pick">Restaurar desde archivo</button><input id="rsf" type="file" accept="application/json,.json" hidden></div>';
     return h;
+  }
+  function exportBackup() {
+    var json = JSON.stringify({ app: "diario-lectura", v: 1, exported: Date.now(), data: S, covers: COV });
+    var name = "diario-lectura-" + dayKey(Date.now()) + ".json";
+    if (inClaude) {
+      window.claude.use("downloads").then(function (d) {
+        if (!d) { toast("Las descargas no están disponibles aquí."); return; }
+        return d.save({ filename: name, data: json }).then(function () { toast("Respaldo listo"); });
+      }).catch(function (er) { if (!(er && er.code === "declined")) toast("No se pudo descargar el respaldo."); });
+      return;
+    }
+    var url = URL.createObjectURL(new Blob([json], { type: "application/json" })), a = document.createElement("a");
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+    toast("Respaldo descargado");
+  }
+  function cleanCovers(c) {
+    var out = {};
+    if (c && typeof c === "object") Object.keys(c).forEach(function (k) { if (typeof c[k] === "string" && /^data:image\/[a-z+]+;base64,[A-Za-z0-9+\/=]+$/.test(c[k])) out[k] = c[k]; });
+    return out;
+  }
+  function restoreSheet(p) {
+    var n = p.data.books.length, ns = (p.data.sessions || []).length;
+    openSheet("<h2>Restaurar respaldo</h2><div class='stack'><p class='msg' style='font-size:12.5px'>El archivo trae " + n + (n === 1 ? " libro" : " libros") + " y " + ns + (ns === 1 ? " sesión" : " sesiones") + ". Reemplazará todo lo que tienes ahora (" + S.books.length + (S.books.length === 1 ? " libro" : " libros") + ").</p>" +
+      '<button class="btn primary block" data-act="restore-do">Reemplazar mis datos</button><button class="btn ghost block" data-act="close">Cancelar</button></div>');
+  }
+  function applyRestore() {
+    var p = ui.restore, old = COV; ui.restore = null; if (!p) return;
+    S = normalize(p.data); S.updated = Date.now();
+    COV = cleanCovers(p.covers);
+    saveCoversLocal();
+    if (coversRef) {
+      Object.keys(old).forEach(function (id) { if (!COV[id]) coversRef.doc(id).delete().catch(function () {}); });
+      Object.keys(COV).forEach(function (id) { coversRef.doc(id).set({ img: COV[id] }).catch(function () {}); });
+    }
+    if (S.timer && S.timer.run) requestWake(); else releaseWake();
+    persist(); closeSheet(); render(); toast("Datos restaurados");
   }
 
   /* ---------- hojas ---------- */
@@ -1138,7 +1197,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     ui.viewId = "";
     var e = ui.edit, isNew = !e.id;
     var h = "<h2>" + (isNew ? "Libro nuevo" : "Editar libro") + '</h2><div class="stack">';
-    h += '<div class="field"><label class="label" for="bi">ISBN</label><div class="row"><input id="bi" type="text" inputmode="numeric" placeholder="978…" value="' + esc(e.isbn) + '"><button type="button" class="btn" data-act="isbn-search"' + (!sample || ui.busy ? " disabled" : "") + ' style="flex:none">' + (ui.busy === "isbn" ? "Buscando…" : "Buscar") + "</button></div>";
+    h += '<div class="field"><label class="label" for="bi">ISBN</label><div class="row"><input id="bi" type="text" inputmode="numeric" placeholder="978…" value="' + esc(e.isbn) + '"><button type="button" class="btn" data-act="isbn-search"' + (!canFind() || ui.busy ? " disabled" : "") + ' style="flex:none">' + (ui.busy === "isbn" ? "Buscando…" : "Buscar") + "</button></div>";
     if (ui.msg) h += '<p class="msg">' + esc(ui.msg) + "</p>";
     h += "</div>";
     var csrc = e.removeCover ? "" : (e.coverData || COV[e.id] || "");
@@ -1149,7 +1208,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     h += '<input id="cov" type="file" accept="image/*" hidden></div></div>';
     h += '<div class="field"><label class="label" for="bt">Título</label><input id="bt" data-focus type="text" value="' + esc(e.title) + '"></div>';
     h += '<div class="field"><label class="label" for="ba">Autor</label><input id="ba" type="text" value="' + esc(e.author) + '"></div>';
-    h += '<button type="button" class="btn block" data-act="title-search"' + (!sample || ui.busy ? " disabled" : "") + '>' + (ui.busy === "title" ? "Buscando…" : "Buscar por título y autor") + "</button>";
+    h += '<button type="button" class="btn block" data-act="title-search"' + (!canFind() || ui.busy ? " disabled" : "") + '>' + (ui.busy === "title" ? "Buscando…" : "Buscar por título y autor") + "</button>";
     h += '<div class="grid2"><div class="field"><label class="label" for="bp">Páginas</label><input id="bp" type="number" inputmode="numeric" min="0" value="' + (e.pages || "") + '"></div>' +
       '<div class="field"><label class="label" for="bc">Página actual</label><input id="bc" type="number" inputmode="numeric" min="0" value="' + (e.page || 0) + '"></div></div>';
     h += infoMeta(e);
@@ -1233,7 +1292,30 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     fr.readAsDataURL(file);
   }
   function sampleErr(c) {
-    return c === "not_granted" ? "No diste permiso para usar Claude en esta página." : c === "rate_limited" ? "Demasiadas consultas seguidas. Intenta en un momento." : "No pude consultar ahora. Intenta de nuevo.";
+    return c === "offline" ? "Sin conexión. Conéctate a internet para buscar." : c === "not_granted" ? "No diste permiso para usar Claude en esta página." : c === "rate_limited" ? "Demasiadas consultas seguidas. Intenta en un momento." : "No pude consultar ahora. Intenta de nuevo.";
+  }
+
+  /* Fuera de Claude, los datos del libro se buscan en Open Library. */
+  function canFind() { return !!sample || !inClaude; }
+  var OL_LANG = { spa: "Español", eng: "Inglés", fre: "Francés", por: "Portugués", ita: "Italiano", ger: "Alemán", jpn: "Japonés" };
+  function olFetch(url) {
+    if (navigator.onLine === false) return Promise.reject({ code: "offline" });
+    return fetch(url).then(function (r) { if (!r.ok) throw { code: "ol" }; return r.json(); });
+  }
+  function olIsbn(code) {
+    return olFetch("https://openlibrary.org/api/books?bibkeys=ISBN:" + code + "&format=json&jscmd=data").then(function (j) {
+      var d = j && j["ISBN:" + code];
+      if (!d || !d.title) return { encontrado: false };
+      return { encontrado: true, titulo: d.title + (d.subtitle ? ": " + d.subtitle : ""), autor: (d.authors || []).map(function (a) { return a.name; }).join(", "), paginas: d.number_of_pages || null, publicacion: d.publish_date || "", editorial: ((d.publishers || [])[0] || {}).name || "" };
+    });
+  }
+  function olTitle(t, a) {
+    return olFetch("https://openlibrary.org/search.json?limit=1&fields=title,author_name,number_of_pages_median,first_publish_year,language&title=" + encodeURIComponent(t) + (a ? "&author=" + encodeURIComponent(a) : "")).then(function (j) {
+      var d = j && (j.docs || [])[0];
+      if (!d || !d.title) return { encontrado: false };
+      var lg = (d.language || []).length === 1 ? OL_LANG[d.language[0]] || "" : "";
+      return { encontrado: true, titulo: d.title, autor: (d.author_name || []).slice(0, 2).join(", "), paginas: d.number_of_pages_median || null, publicacion: d.first_publish_year ? String(d.first_publish_year) : "", idioma: lg };
+    });
   }
 
   function inkFor(hex) {
@@ -1326,12 +1408,12 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         var code = validIsbn(e.isbn || "");
         if (!code) { ui.msg = "Ese ISBN no es válido. Revisa los 10 o 13 dígitos."; reopen(); break; }
         e.isbn = code; ui.busy = "isbn"; ui.msg = ""; reopen();
-        sample.json('Dame los datos del libro con ISBN ' + code + '. Responde solo con un objeto JSON: {"encontrado": true o false, "titulo": string, "autor": string, "paginas": número o null, "idioma": string, "genero": string (un solo género principal en español, por ejemplo Novela, Fantasía, Ciencia ficción, Misterio, Romance, Histórica, Terror, Biografía, Ensayo, Autoayuda, Poesía o Juvenil), "publicacion": string (año o fecha de la primera publicación), "resumen": string (2 o 3 frases, sin spoilers)}. Si no reconoces ese ISBN con seguridad, responde {"encontrado": false}. No inventes datos.', { modelTier: "quick" }).then(function (r) {
+        (sample ? sample.json('Dame los datos del libro con ISBN ' + code + '. Responde solo con un objeto JSON: {"encontrado": true o false, "titulo": string, "autor": string, "paginas": número o null, "idioma": string, "genero": string (un solo género principal en español, por ejemplo Novela, Fantasía, Ciencia ficción, Misterio, Romance, Histórica, Terror, Biografía, Ensayo, Autoayuda, Poesía o Juvenil), "publicacion": string (año o fecha de la primera publicación), "resumen": string (2 o 3 frases, sin spoilers)}. Si no reconoces ese ISBN con seguridad, responde {"encontrado": false}. No inventes datos.', { modelTier: "quick" }) : olIsbn(code)).then(function (r) {
           ui.busy = ""; if (!ui.edit) return;
           if (r && r.encontrado && r.titulo) {
             ui.edit.title = r.titulo; if (r.autor) ui.edit.author = r.autor; if (r.paginas) ui.edit.pages = +r.paginas || ui.edit.pages;
             fillInfo(ui.edit, r);
-            ui.msg = "Datos llenados. Revísalos: vienen de lo que Claude sabe del ISBN, no de una base de datos en línea.";
+            ui.msg = sample ? "Datos llenados. Revísalos: vienen de lo que Claude sabe del ISBN, no de una base de datos en línea." : "Datos llenados desde Open Library. Revísalos antes de guardar.";
           } else ui.msg = "No reconocí ese ISBN. Escribe los datos o toma una foto de la portada.";
           reopen();
         }).catch(function (er) { ui.busy = ""; ui.msg = sampleErr(er && er.code); if (ui.edit) reopen(); });
@@ -1408,12 +1490,12 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         var tq = (e.title || "").trim(), aq = (e.author || "").trim();
         if (!tq) { ui.msg = "Escribe el título (y si puedes, el autor) para buscar."; reopen(); break; }
         ui.busy = "title"; ui.msg = ""; reopen();
-        sample.json('Identifica este libro. Título: "' + tq.replace(/"/g, "'") + '"' + (aq ? '. Autor: "' + aq.replace(/"/g, "'") + '"' : "") + '. Usa el autor, si lo hay, para distinguirlo de otros libros con el mismo título. Responde solo con un objeto JSON: {"encontrado": true o false, "titulo": string (título completo y correcto), "autor": string (nombre completo), "paginas": número aproximado de páginas o null, "idioma": string (idioma original), "genero": string (un solo género principal en español, por ejemplo Novela, Fantasía, Ciencia ficción, Misterio, Romance, Histórica, Terror, Biografía, Ensayo, Autoayuda, Poesía o Juvenil), "publicacion": string (año o fecha de la primera publicación), "resumen": string (2 o 3 frases, sin spoilers)}. Si no estás seguro de cuál libro es, responde {"encontrado": false}. No inventes datos.', { modelTier: "quick" }).then(function (r) {
+        (sample ? sample.json('Identifica este libro. Título: "' + tq.replace(/"/g, "'") + '"' + (aq ? '. Autor: "' + aq.replace(/"/g, "'") + '"' : "") + '. Usa el autor, si lo hay, para distinguirlo de otros libros con el mismo título. Responde solo con un objeto JSON: {"encontrado": true o false, "titulo": string (título completo y correcto), "autor": string (nombre completo), "paginas": número aproximado de páginas o null, "idioma": string (idioma original), "genero": string (un solo género principal en español, por ejemplo Novela, Fantasía, Ciencia ficción, Misterio, Romance, Histórica, Terror, Biografía, Ensayo, Autoayuda, Poesía o Juvenil), "publicacion": string (año o fecha de la primera publicación), "resumen": string (2 o 3 frases, sin spoilers)}. Si no estás seguro de cuál libro es, responde {"encontrado": false}. No inventes datos.', { modelTier: "quick" }) : olTitle(tq, aq)).then(function (r) {
           ui.busy = ""; if (!ui.edit) return;
           if (r && r.encontrado && r.titulo) {
             ui.edit.title = r.titulo; if (r.autor) ui.edit.author = r.autor; if (r.paginas) ui.edit.pages = +r.paginas || ui.edit.pages;
             fillInfo(ui.edit, r);
-            ui.msg = "Datos llenados. Revísalos: vienen de lo que Claude sabe del libro, no de una base en línea. El número de páginas cambia según la edición y el ISBN está en la contraportada.";
+            ui.msg = (sample ? "Datos llenados. Revísalos: vienen de lo que Claude sabe del libro, no de una base en línea." : "Datos llenados desde Open Library. Revísalos: puede ser otra edición o el título original.") + " El número de páginas cambia según la edición y el ISBN está en la contraportada.";
           } else ui.msg = aq ? "No pude identificar ese libro con ese autor. Revisa cómo está escrito o llena los datos a mano." : "No pude identificar ese libro. Agrega el autor para afinar la búsqueda.";
           reopen();
         }).catch(function (er) { ui.busy = ""; ui.msg = sampleErr(er && er.code); if (ui.edit) reopen(); });
@@ -1592,6 +1674,14 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         if (!md) { toast("Escribe la definición"); break; }
         S.words.push({ id: uid(), word: ui.q.trim(), pos: "", def: md, bookId: curDictBook(), ts: Date.now() });
         ui.q = ""; persist(); render(); toast("Palabra guardada"); break;
+      case "backup": exportBackup(); break;
+      case "restore-pick": var rf = $("#rsf"); if (rf) rf.click(); break;
+      case "restore-do": applyRestore(); break;
+      case "install":
+        var ie = ui.installEvt; if (!ie) break;
+        ui.installEvt = null; ie.prompt();
+        ie.userChoice.then(function () { render(); }).catch(function () { render(); }); break;
+      case "install-hide": try { localStorage.setItem(LSI, "1"); } catch (e2) {} render(); break;
       case "del-word": S.words = S.words.filter(function (w) { return w.id !== el.dataset.id; }); if (ui.result && ui.result.id === el.dataset.id) ui.result = null; persist(); render(); break;
     }
   }
@@ -1657,6 +1747,18 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   document.addEventListener("change", function (ev) {
     if (ev.target.id === "msb") msHint();
     if (ev.target.id === "wbook") { ui.dictBook = ev.target.value; ui.result = null; }
+    if (ev.target.id === "rsf" && ev.target.files && ev.target.files[0]) {
+      var rr = new FileReader();
+      rr.onerror = function () { toast("No pude leer ese archivo"); };
+      rr.onload = function () {
+        var p = null; try { p = JSON.parse(rr.result); } catch (er) {}
+        if (p && !p.data && Array.isArray(p.books)) p = { data: p, covers: {} };
+        if (!p || !p.data || !Array.isArray(p.data.books)) { toast("Ese archivo no es un respaldo del diario"); return; }
+        ui.restore = p; restoreSheet(p);
+      };
+      rr.readAsText(ev.target.files[0]);
+      ev.target.value = "";
+    }
     if (ev.target.id === "cov" && ev.target.files && ev.target.files[0] && ui.edit) {
       var file = ev.target.files[0];
       readEdit();
@@ -1683,6 +1785,15 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     }
   }
   setInterval(tick, 1000);
+
+  if (!inClaude) {
+    if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
+      window.addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () {}); });
+    }
+    try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {}); } catch (e) {}
+    window.addEventListener("beforeinstallprompt", function (ev) { ev.preventDefault(); ui.installEvt = ev; if (!ui.sheet) render(); });
+    window.addEventListener("appinstalled", function () { ui.installEvt = null; toast("App instalada"); if (!ui.sheet) render(); });
+  }
 
   render();
   if (S.timer && S.timer.run) requestWake();
