@@ -310,6 +310,9 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
 /* resultados de búsqueda */
 .pick { align-items: center; }
 .pcov { position: relative; flex: none; width: 46px; height: 66px; border-radius: 4px 8px 8px 4px; overflow: hidden; display: grid; place-items: center; font-family: var(--display); font-size: 20.5px; box-shadow: inset 4px 0 0 rgba(0, 0, 0, .08); }
+.ccov { position: relative; flex: none; width: 104px; aspect-ratio: 2 / 3; border-radius: 5px 10px 10px 5px; overflow: hidden; display: grid; place-items: center; font-family: var(--display); font-size: 34.5px; box-shadow: var(--shadow), inset 5px 0 0 rgba(0, 0, 0, .08); }
+.ccov img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.clamp { display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
 .pcov img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 </style>
 </head>
@@ -1336,48 +1339,66 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     return getJson("https://openlibrary.org/api/books?bibkeys=ISBN:" + code + "&format=json&jscmd=data").then(function (j) {
       var d = j && j["ISBN:" + code];
       if (!d || !d.title) return { encontrado: false };
-      return { encontrado: true, src: "Open Library", titulo: d.title + (d.subtitle ? ": " + d.subtitle : ""), autor: (d.authors || []).map(function (a) { return a.name; }).join(", "), paginas: d.number_of_pages || null, publicacion: d.publish_date || "", editorial: ((d.publishers || [])[0] || {}).name || "" };
+      return { encontrado: true, src: "Open Library", titulo: d.title + (d.subtitle ? ": " + d.subtitle : ""), autor: (d.authors || []).map(function (a) { return a.name; }).join(", "), paginas: d.number_of_pages || null, publicacion: d.publish_date || "", editorial: ((d.publishers || [])[0] || {}).name || "", coverL: httpsUrl((d.cover || {}).medium) };
     });
   }
   function olSearch(params) {
-    return getJson("https://openlibrary.org/search.json?limit=1&fields=title,author_name,number_of_pages_median,first_publish_year,language,publisher&" + params).then(function (j) {
+    return getJson("https://openlibrary.org/search.json?limit=1&fields=title,author_name,number_of_pages_median,first_publish_year,language,publisher,cover_i&" + params).then(function (j) {
       var d = j && (j.docs || [])[0];
       if (!d || !d.title) return { encontrado: false };
       var lg = (d.language || []).length === 1 ? OL_LANG[d.language[0]] || "" : "";
-      return { encontrado: true, src: "Open Library", titulo: d.title, autor: (d.author_name || []).slice(0, 2).join(", "), paginas: d.number_of_pages_median || null, publicacion: d.first_publish_year ? String(d.first_publish_year) : "", idioma: lg, editorial: (d.publisher || [])[0] || "" };
+      return { encontrado: true, src: "Open Library", titulo: d.title, autor: (d.author_name || []).slice(0, 2).join(", "), paginas: d.number_of_pages_median || null, publicacion: d.first_publish_year ? String(d.first_publish_year) : "", idioma: lg, editorial: (d.publisher || [])[0] || "", coverL: d.cover_i ? "https://covers.openlibrary.org/b/id/" + d.cover_i + "-M.jpg" : "" };
     });
   }
   function gBooks(q) {
     return getJson("https://www.googleapis.com/books/v1/volumes?maxResults=1&q=" + encodeURIComponent(q)).then(function (j) {
       var v = j && j.items && j.items[0] && j.items[0].volumeInfo;
       if (!v || !v.title) return { encontrado: false };
-      return { encontrado: true, src: "Google Books", titulo: v.title + (v.subtitle ? ": " + v.subtitle : ""), autor: (v.authors || []).join(", "), paginas: v.pageCount || null, publicacion: v.publishedDate || "", editorial: v.publisher || "", idioma: GB_LANG[v.language] || "", genero: (v.categories || [])[0] || "", resumen: String(v.description || "").replace(/<[^>]*>/g, "") };
+      var c = gCand(v); c.encontrado = true; return c;
     });
   }
   function findIsbn(code) {
-    var alt = isbn10(code), tries = [
+    var alt = isbn10(code);
+    return firstFound(isbnTries(code, alt)).then(function (r) {
+      if (r && r.encontrado) {
+        r.isbn = code;
+        if (!r.coverL) r.coverL = "https://covers.openlibrary.org/b/isbn/" + code + "-M.jpg?default=false";
+      }
+      return r;
+    });
+  }
+  function isbnTries(code, alt) {
+    var tries = [
       function () { return olBooks(code); },
       function () { return gBooks("isbn:" + code); },
       function () { return olSearch("isbn=" + code); }
     ];
     if (alt) tries.push(function () { return olBooks(alt); }, function () { return gBooks("isbn:" + alt); });
-    return firstFound(tries);
+    return tries;
   }
   /* Búsqueda por título: junta varios resultados de las dos fuentes para elegir uno. */
+  /* De la lista de ISBN de una obra en Open Library, elige un ISBN-13, de preferencia de una edición en español. */
+  var ES_GROUPS = /^978(84|607|968|970|950|987|956|958|980|9972|9974|9978|9942|9945|99905|99922|99923|99924|99925)/;
+  function bestIsbn(list) {
+    var all = (list || []).map(function (x) { var v = validIsbn(String(x)); return v ? isbn13(v) : ""; }).filter(Boolean);
+    return all.filter(function (x) { return ES_GROUPS.test(x); })[0] || all[0] || "";
+  }
+  function gCand(v) {
+    var ids = v.industryIdentifiers || [], i13 = ids.filter(function (x) { return x.type === "ISBN_13"; })[0], i10 = ids.filter(function (x) { return x.type === "ISBN_10"; })[0], im = v.imageLinks || {};
+    return { src: "Google Books", titulo: v.title + (v.subtitle ? ": " + v.subtitle : ""), autor: (v.authors || []).join(", "), paginas: v.pageCount || null, publicacion: v.publishedDate || "", editorial: v.publisher || "", idioma: GB_LANG[v.language] || "", genero: (v.categories || [])[0] || "", resumen: String(v.description || "").replace(/<[^>]*>/g, ""), isbn: i13 ? normIsbn(i13.identifier) : (i10 ? normIsbn(i10.identifier) : ""), cover: httpsUrl(im.smallThumbnail || im.thumbnail), coverL: httpsUrl(im.thumbnail || im.smallThumbnail) };
+  }
   function httpsUrl(u) { u = String(u || "").replace(/^http:/, "https:"); return /^https:\/\/[^\s"'<>]+$/.test(u) ? u : ""; }
   function olList(params) {
-    return getJson("https://openlibrary.org/search.json?limit=8&fields=title,author_name,number_of_pages_median,first_publish_year,language,publisher,cover_i&" + params).then(function (j) {
+    return getJson("https://openlibrary.org/search.json?limit=8&fields=title,author_name,number_of_pages_median,first_publish_year,language,publisher,cover_i,isbn&" + params).then(function (j) {
       return ((j && j.docs) || []).filter(function (d) { return d.title; }).map(function (d) {
-        return { src: "Open Library", titulo: d.title, autor: (d.author_name || []).slice(0, 2).join(", "), paginas: d.number_of_pages_median || null, publicacion: d.first_publish_year ? String(d.first_publish_year) : "", idioma: (d.language || []).length === 1 ? OL_LANG[d.language[0]] || "" : "", editorial: (d.publisher || [])[0] || "", cover: d.cover_i ? "https://covers.openlibrary.org/b/id/" + d.cover_i + "-S.jpg" : "" };
+        var cv = d.cover_i ? "https://covers.openlibrary.org/b/id/" + d.cover_i : "";
+        return { src: "Open Library", titulo: d.title, autor: (d.author_name || []).slice(0, 2).join(", "), paginas: d.number_of_pages_median || null, publicacion: d.first_publish_year ? String(d.first_publish_year) : "", idioma: (d.language || []).length === 1 ? OL_LANG[d.language[0]] || "" : "", editorial: (d.publisher || [])[0] || "", isbn: bestIsbn(d.isbn), cover: cv && cv + "-S.jpg", coverL: cv && cv + "-M.jpg" };
       });
     });
   }
   function gList(q) {
     return getJson("https://www.googleapis.com/books/v1/volumes?maxResults=8&q=" + encodeURIComponent(q)).then(function (j) {
-      return ((j && j.items) || []).map(function (it) { return it.volumeInfo || {}; }).filter(function (v) { return v.title; }).map(function (v) {
-        var ids = v.industryIdentifiers || [], i13 = ids.filter(function (x) { return x.type === "ISBN_13"; })[0], i10 = ids.filter(function (x) { return x.type === "ISBN_10"; })[0];
-        return { src: "Google Books", titulo: v.title + (v.subtitle ? ": " + v.subtitle : ""), autor: (v.authors || []).join(", "), paginas: v.pageCount || null, publicacion: v.publishedDate || "", editorial: v.publisher || "", idioma: GB_LANG[v.language] || "", genero: (v.categories || [])[0] || "", resumen: String(v.description || "").replace(/<[^>]*>/g, ""), isbn: i13 ? i13.identifier : (i10 ? normIsbn(i10.identifier) : ""), cover: httpsUrl((v.imageLinks || {}).smallThumbnail) };
-      });
+      return ((j && j.items) || []).map(function (it) { return it.volumeInfo || {}; }).filter(function (v) { return v.title; }).map(gCand);
     });
   }
   function orMore(first, more) { return first().then(function (l) { return l.length ? l : more(); }); }
@@ -1394,9 +1415,14 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
       function add(c) {
         var k = key(c), prev = seen[k];
         if (!prev) { seen[k] = c; out.push(c); return; }
-        ["paginas", "publicacion", "editorial", "idioma", "genero", "resumen", "isbn", "cover"].forEach(function (f) { if (!prev[f] && c[f]) prev[f] = c[f]; });
+        ["paginas", "publicacion", "editorial", "idioma", "genero", "resumen", "isbn", "cover", "coverL"].forEach(function (f) { if (!prev[f] && c[f]) prev[f] = c[f]; });
       }
       for (var i = 0; i < Math.max(g.length, o.length); i++) { if (g[i]) add(g[i]); if (o[i]) add(o[i]); }
+      out.forEach(function (c) {
+        var byIsbn = c.isbn ? "https://covers.openlibrary.org/b/isbn/" + c.isbn : "";
+        if (!c.cover && byIsbn) c.cover = byIsbn + "-S.jpg?default=false";
+        if (!c.coverL) c.coverL = c.cover && byIsbn ? byIsbn + "-M.jpg?default=false" : c.cover;
+      });
       return out.slice(0, 12);
     });
   }
@@ -1409,6 +1435,28 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     });
     h += '</div><button class="btn ghost block" style="margin-top:12px" data-act="pick-none">Ninguno de estos</button>';
     openSheet(h);
+  }
+
+  /* Antes de llenar el formulario se muestra el libro en grande para confirmarlo. */
+  function candSheet() {
+    var c = ui.cand, img = c.coverL || c.cover;
+    var h = "<h2>¿Es este libro?</h2><div class='row' style='align-items:flex-start;gap:14px'><div class='ccov c-" + COLORS[hash(c.titulo || "") % COLORS.length] + "' aria-hidden='true'>" + esc((c.titulo || "?").charAt(0).toUpperCase()) +
+      (img ? '<img src="' + esc(img) + '" alt="Portada de ' + esc(c.titulo) + '" onerror="this.remove()">' : "") + "</div><div style='flex:1;min-width:0'><div class='btitle' style='font-size:16px'>" + esc(c.titulo) + "</div><div class='bauthor'>" + esc(c.autor || "Autor sin registrar") + "</div><div class='stack' style='gap:3px;margin-top:8px'>";
+    [["Publicación", c.publicacion], ["Páginas", c.paginas], ["Editorial", c.editorial], ["Idioma", c.idioma]].forEach(function (x) { if (x[1]) h += "<div class='meta'><b>" + x[0] + ":</b> " + esc(x[1]) + "</div>"; });
+    h += "<div class='meta'><b>ISBN-13:</b> " + (c.isbn ? esc(c.isbn) : "no viene en esta fuente") + "</div>";
+    h += "<span class='tag' style='align-self:flex-start;margin-top:4px'>" + esc(c.src || "") + "</span></div></div></div>";
+    if (c.resumen) h += "<p class='msg clamp' style='font-size:12.5px;margin-top:12px'>" + esc(c.resumen) + "</p>";
+    if (!img) h += "<p class='msg' style='margin-top:10px'>Esta fuente no trae portada.</p>";
+    h += "<div class='stack' style='margin-top:14px'><button class='btn primary block' data-act='cand-yes'>Sí, llenar con estos datos</button><button class='btn ghost block' data-act='cand-no'>" + (ui.picks ? "No es este, volver a la lista" : "No es este") + "</button></div>";
+    openSheet(h);
+  }
+  function applyCand(c) {
+    var e = ui.edit;
+    e.title = c.titulo; if (c.autor) e.author = c.autor; if (c.paginas) e.pages = +c.paginas || e.pages;
+    if (c.isbn) e.isbn = normIsbn(c.isbn);
+    if (c.idioma) e.lang = c.idioma; if (c.publicacion) e.pub = String(c.publicacion); if (c.editorial) e.editorial = c.editorial;
+    if (c.genero && !e.genre) e.genre = c.genero; if (c.resumen && !e.summary) e.summary = c.resumen;
+    return "Datos llenados desde " + c.src + "." + (c.isbn ? "" : " Esta fuente no trae ISBN: búscalo en la contraportada.") + " Revísalos antes de guardar.";
   }
 
   function inkFor(hex) {
@@ -1504,11 +1552,11 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         code = isbn13(code); e.isbn = code; ui.busy = "isbn"; ui.msg = ""; reopen();
         (sample ? sample.json('Dame los datos del libro con ISBN ' + code + '. Responde solo con un objeto JSON: {"encontrado": true o false, "titulo": string, "autor": string, "paginas": número o null, "idioma": string, "genero": string (un solo género principal en español, por ejemplo Novela, Fantasía, Ciencia ficción, Misterio, Romance, Histórica, Terror, Biografía, Ensayo, Autoayuda, Poesía o Juvenil), "publicacion": string (año o fecha de la primera publicación), "resumen": string (2 o 3 frases, sin spoilers)}. Si no reconoces ese ISBN con seguridad, responde {"encontrado": false}. No inventes datos.', { modelTier: "quick" }) : findIsbn(code)).then(function (r) {
           ui.busy = ""; if (!ui.edit) return;
+          if (r && r.encontrado && r.titulo && !sample) { ui.picks = null; ui.cand = r; ui.convMsg = conv ? "Convertí el ISBN-10 a su ISBN-13 oficial. " : ""; candSheet(); return; }
           if (r && r.encontrado && r.titulo) {
             ui.edit.title = r.titulo; if (r.autor) ui.edit.author = r.autor; if (r.paginas) ui.edit.pages = +r.paginas || ui.edit.pages;
             fillInfo(ui.edit, r);
-            ui.msg = sample ? "Datos llenados. Revísalos: vienen de lo que Claude sabe del ISBN, no de una base de datos en línea." : "Datos llenados desde " + (r.src || "internet") + ". Revísalos antes de guardar.";
-            if (conv) ui.msg = "Convertí el ISBN-10 a su ISBN-13 oficial. " + ui.msg;
+            ui.msg = "Datos llenados. Revísalos: vienen de lo que Claude sabe del ISBN, no de una base de datos en línea.";
           } else ui.msg = sample ? "No reconocí ese ISBN. Escribe los datos o toma una foto de la portada." : "No encontré ese ISBN en Open Library ni en Google Books. Prueba con “Buscar por título y autor” o escribe los datos.";
           reopen();
         }).catch(function (er) { ui.busy = ""; ui.msg = sampleErr(er && er.code); if (ui.edit) reopen(); });
@@ -1589,7 +1637,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
           findTitles(tq, aq).then(function (list) {
             ui.busy = ""; if (!ui.edit) return;
             if (!list.length) { ui.msg = aq ? "No encontré libros con ese título y autor. Revisa cómo están escritos o llena los datos a mano." : "No encontré libros con ese título. Agrega el autor o llena los datos a mano."; reopen(); return; }
-            ui.picks = list; pickSheet(tq);
+            ui.picks = list; ui.pickQ = tq; pickSheet(tq);
           }).catch(function (er) { ui.busy = ""; ui.msg = sampleErr(er && er.code); if (ui.edit) reopen(); });
           break;
         }
@@ -1604,14 +1652,18 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         }).catch(function (er) { ui.busy = ""; ui.msg = sampleErr(er && er.code); if (ui.edit) reopen(); });
         break;
       case "pick-book":
-        var pc = ui.picks && ui.picks[+el.dataset.i]; e = ui.edit; ui.picks = null;
-        if (!pc || !e) break;
-        e.title = pc.titulo; if (pc.autor) e.author = pc.autor; if (pc.paginas) e.pages = +pc.paginas || e.pages;
-        if (pc.isbn && !validIsbn(e.isbn || "")) e.isbn = pc.isbn;
-        if (pc.idioma) e.lang = pc.idioma; if (pc.publicacion) e.pub = pc.publicacion; if (pc.editorial) e.editorial = pc.editorial;
-        if (pc.genero && !e.genre) e.genre = pc.genero; if (pc.resumen && !e.summary) e.summary = pc.resumen;
-        ui.msg = "Datos llenados desde " + pc.src + ". Revísalos: el número de páginas cambia según la edición.";
+        var pc = ui.picks && ui.picks[+el.dataset.i];
+        if (!pc || !ui.edit) break;
+        ui.cand = pc; ui.convMsg = ""; candSheet(); break;
+      case "cand-yes":
+        var cy = ui.cand; ui.cand = null; ui.picks = null;
+        if (!cy || !ui.edit) break;
+        ui.msg = (ui.convMsg || "") + applyCand(cy); ui.convMsg = "";
         reopen(); break;
+      case "cand-no":
+        ui.cand = null;
+        if (ui.picks) { pickSheet(ui.pickQ || ""); break; }
+        ui.convMsg = ""; ui.msg = "Prueba con “Buscar por título y autor” para ver más opciones, o llena los datos a mano."; reopen(); break;
       case "pick-none": ui.picks = null; ui.msg = "Prueba agregando el autor para afinar la búsqueda, o llena los datos a mano."; reopen(); break;
       case "finish-card":
         var fbk0 = bookById(el.dataset.id); if (!fbk0) break;
