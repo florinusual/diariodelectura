@@ -215,6 +215,20 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
 .coverrow { display: flex; gap: 14px; align-items: center; }
 .coverrow .cov { width: 84px; flex: none; font-size: 10.5px; padding: 6px; }
 .coverrow .cov img { margin: -6px; width: calc(100% + 12px); height: calc(100% + 12px); }
+/* ISBN, título y autor con lupa; portada a la derecha */
+.idgrid { display: grid; grid-template-columns: minmax(0, 1fr) 104px; gap: 12px; align-items: start; }
+.idgrid > .stack { min-width: 0; }
+.idcov { display: flex; flex-direction: column; gap: 6px; padding-top: 21px; }
+.idcov .cov { width: 100%; font-size: 10.5px; padding: 6px; }
+.idcov .cov img { margin: -6px; width: calc(100% + 12px); height: calc(100% + 12px); }
+.idcov .btn { width: 100%; }
+.qrow { display: flex; gap: 6px; align-items: stretch; }
+.qrow input { flex: 1; }
+.qbtn { flex: none; width: 46px; min-height: 46px; padding: 0; border-radius: 12px; }
+.qbtn svg { width: 21px; height: 21px; }
+.spin { width: 18px; height: 18px; border: 2.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation-duration: 2.4s; } }
 .msg { font-size: 11.5px; color: var(--muted); margin: 0; }
 .rgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
 .rc { padding: 10px; display: flex; flex-direction: column; gap: 9px; min-width: 0; }
@@ -732,15 +746,32 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     return h;
   }
 
-  function wishSheet() {
-    var e = ui.edit, isNew = !e.id, off = (!canFind() || ui.busy) ? " disabled" : "";
-    var h = "<h2>" + (isNew ? "Libro deseado" : "Editar deseo") + '</h2><div class="stack">';
-    h += '<div class="field"><label class="label" for="bi">ISBN</label><div class="row"><input id="bi" type="text" inputmode="numeric" placeholder="978…" value="' + esc(e.isbn) + '"><button type="button" class="btn" data-act="isbn-search"' + off + ' style="flex:none">' + (ui.busy === "isbn" ? "Buscando…" : "Buscar") + "</button></div>";
+  var ICON_SEARCH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M20 20l-4.6-4.6"/></svg>';
+  function qField(id, label, val, act, attrs) {
+    var busy = ui.busy === (act === "isbn-search" ? "isbn" : "title");
+    return '<div class="field"><label class="label" for="' + id + '">' + label + '</label><div class="qrow"><input id="' + id + '" type="text" ' + attrs + ' value="' + esc(val) + '">' +
+      '<button type="button" class="btn qbtn" data-act="' + act + '" aria-label="Buscar el libro por ' + (label === "ISBN" ? label : label.toLowerCase()) + '"' + (!canFind() || ui.busy ? " disabled" : "") + ">" + (busy ? '<span class="spin" aria-label="Buscando"></span>' : ICON_SEARCH) + "</button></div></div>";
+  }
+  /* ISBN, título y autor, cada uno con su lupa; en libros, la portada va a la derecha. */
+  function idBlock(e, withCover) {
+    var f = qField("bi", "ISBN", e.isbn, "isbn-search", 'inputmode="numeric" placeholder="978…"') + qField("bt", "Título", e.title, "title-search", "data-focus") + qField("ba", "Autor", e.author, "title-search", ""), h;
+    if (!withCover) h = '<div class="stack">' + f + "</div>";
+    else {
+      var csrc = e.removeCover ? "" : (e.coverData || COV[e.id] || "");
+      h = '<div class="idgrid"><div class="stack">' + f + '</div><div class="idcov"><div class="cov c-' + esc(e.color) + '" style="' + bgStyle(e) + '">' + (csrc ? '<img src="' + csrc + '" alt="Portada">' : (ui.busy === "cover" ? "Bajando portada…" : "Sin portada")) + "</div>" +
+        '<button type="button" class="btn sm" data-act="pick-cover">' + (csrc ? "Cambiar foto" : "Tomar foto") + "</button>";
+      if (e.coverBlob && sampleImg) h += '<button type="button" class="btn sm ghost" data-act="ocr-cover"' + (ui.busy ? " disabled" : "") + ">" + (ui.busy === "ocr" ? "Leyendo…" : "Leer datos") + "</button>";
+      if (csrc) h += '<button type="button" class="btn sm ghost" data-act="rm-cover">Quitar</button>';
+      h += '<input id="cov" type="file" accept="image/*" hidden></div></div>';
+    }
     if (ui.msg) h += '<p class="msg">' + esc(ui.msg) + "</p>";
-    h += "</div>";
-    h += '<div class="field"><label class="label" for="bt">Título</label><input id="bt" data-focus type="text" value="' + esc(e.title) + '"></div>';
-    h += '<div class="field"><label class="label" for="ba">Autor</label><input id="ba" type="text" value="' + esc(e.author) + '"></div>';
-    h += '<button type="button" class="btn block" data-act="title-search"' + (!canFind() || ui.busy ? " disabled" : "") + '>' + (ui.busy === "title" ? "Buscando…" : "Buscar por título y autor") + "</button>";
+    else if (canFind()) h += '<p class="msg">Toca la lupa junto al ISBN, el título o el autor para buscar el libro.</p>';
+    return h;
+  }
+  function wishSheet() {
+    var e = ui.edit, isNew = !e.id;
+    var h = "<h2>" + (isNew ? "Libro deseado" : "Editar deseo") + '</h2><div class="stack">';
+    h += idBlock(e, false);
     h += '<div class="field"><label class="label" for="bp">Páginas</label><input id="bp" type="number" inputmode="numeric" min="0" value="' + (e.pages || "") + '"></div>';
     h += infoMeta(e);
     h += sagaFields(e);
@@ -1204,19 +1235,8 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   function bookSheet() {
     ui.viewId = "";
     var e = ui.edit, isNew = !e.id;
-    var h = "<h2>" + (isNew ? "Libro nuevo" : "Editar libro") + '</h2><div class="stack">';
-    h += '<div class="field"><label class="label" for="bi">ISBN</label><div class="row"><input id="bi" type="text" inputmode="numeric" placeholder="978…" value="' + esc(e.isbn) + '"><button type="button" class="btn" data-act="isbn-search"' + (!canFind() || ui.busy ? " disabled" : "") + ' style="flex:none">' + (ui.busy === "isbn" ? "Buscando…" : "Buscar") + "</button></div>";
-    if (ui.msg) h += '<p class="msg">' + esc(ui.msg) + "</p>";
-    h += "</div>";
-    var csrc = e.removeCover ? "" : (e.coverData || COV[e.id] || "");
-    h += '<div class="coverrow"><div class="cov c-' + esc(e.color) + '" style="' + bgStyle(e) + '">' + (csrc ? '<img src="' + csrc + '" alt="Portada">' : (ui.busy === "cover" ? "Bajando portada…" : "Sin portada")) + '</div><div class="stack" style="flex:1;min-width:0;gap:8px">' +
-      '<button type="button" class="btn block" data-act="pick-cover">' + (csrc ? "Cambiar foto" : "Foto de portada") + "</button>";
-    if (e.coverBlob && sampleImg) h += '<button type="button" class="btn ghost block" data-act="ocr-cover"' + (ui.busy ? " disabled" : "") + ">" + (ui.busy === "ocr" ? "Leyendo…" : "Leer título y autor") + "</button>";
-    if (csrc) h += '<button type="button" class="btn ghost block" data-act="rm-cover">Quitar portada</button>';
-    h += '<input id="cov" type="file" accept="image/*" hidden></div></div>';
-    h += '<div class="field"><label class="label" for="bt">Título</label><input id="bt" data-focus type="text" value="' + esc(e.title) + '"></div>';
-    h += '<div class="field"><label class="label" for="ba">Autor</label><input id="ba" type="text" value="' + esc(e.author) + '"></div>';
-    h += '<button type="button" class="btn block" data-act="title-search"' + (!canFind() || ui.busy ? " disabled" : "") + '>' + (ui.busy === "title" ? "Buscando…" : "Buscar por título y autor") + "</button>";
+    var h = "<h2>" + (isNew ? (e.fromWish ? "De deseos a mis libros" : "Libro nuevo") : "Editar libro") + '</h2><div class="stack">';
+    h += idBlock(e, true);
     h += '<div class="grid2"><div class="field"><label class="label" for="bp">Páginas</label><input id="bp" type="number" inputmode="numeric" min="0" value="' + (e.pages || "") + '"></div>' +
       '<div class="field"><label class="label" for="bc">Página actual</label><input id="bc" type="number" inputmode="numeric" min="0" value="' + (e.page || 0) + '"></div></div>';
     h += infoMeta(e);
@@ -1405,12 +1425,16 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   function orMore(first, more) { return first().then(function (l) { return l.length ? l : more(); }); }
   function findTitles(t, a) {
     var tq = "title=" + encodeURIComponent(t), all = t + (a ? " " + a : "");
+    if (!t) return mergeLists(soft(olList("author=" + encodeURIComponent(a))), soft(gList("inauthor:" + a)));
     var ol = a ? orMore(function () { return olList(tq + "&author=" + encodeURIComponent(a)); }, function () { return olList(tq); }) : orMore(function () { return olList(tq); }, function () { return olList("q=" + encodeURIComponent(t)); });
     var gb = orMore(function () { return gList("intitle:" + t + (a ? " inauthor:" + a : "")); }, function () { return gList(all); });
-    var errs = [];
-    function soft(p) { return p.catch(function (er) { errs.push(er); return null; }); }
-    return Promise.all([soft(gb), soft(ol)]).then(function (r) {
-      if (!r[0] && !r[1]) throw errs[0];
+    return mergeLists(soft(gb), soft(ol));
+  }
+  function soft(p) { return p.catch(function (er) { return { err: er }; }); }
+  function mergeLists(gp, op) {
+    return Promise.all([gp, op]).then(function (r) {
+      if (r[0].err && r[1].err) throw r[0].err;
+      r = r.map(function (x) { return x.err ? null : x; });
       var g = r[0] || [], o = r[1] || [], out = [], seen = {};
       function key(c) { return (c.titulo + "|" + c.autor.split(",")[0]).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9|]+/g, ""); }
       function add(c) {
@@ -1545,7 +1569,8 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         else if (e.coverData) { COV[newId] = e.coverData; saveCover(newId); }
         var i = S.books.map(function (x) { return x.id; }).indexOf(rec.id);
         if (i > -1) S.books[i] = rec; else S.books.push(rec);
-        bumpSaga(rec); persist(); afterSave(); toast("Libro guardado"); break;
+        if (e.fromWish) S.wish = S.wish.filter(function (x) { return x.id !== e.fromWish; });
+        bumpSaga(rec); persist(); afterSave(); toast(e.fromWish ? "Pasó de deseos a tus libros" : "Libro guardado"); break;
       case "del-book":
         if (!ui.confirm) { readEdit(); ui.confirm = true; bookSheet(); break; }
         var bid = ui.edit.id;
@@ -1570,7 +1595,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
             ui.edit.title = r.titulo; if (r.autor) ui.edit.author = r.autor; if (r.paginas) ui.edit.pages = +r.paginas || ui.edit.pages;
             fillInfo(ui.edit, r);
             ui.msg = "Datos llenados. Revísalos: vienen de lo que Claude sabe del ISBN, no de una base de datos en línea.";
-          } else ui.msg = sample ? "No reconocí ese ISBN. Escribe los datos o toma una foto de la portada." : "No encontré ese ISBN en Open Library ni en Google Books. Prueba con “Buscar por título y autor” o escribe los datos.";
+          } else ui.msg = sample ? "No reconocí ese ISBN. Escribe los datos o toma una foto de la portada." : "No encontré ese ISBN en Open Library ni en Google Books. Prueba con la lupa del título o del autor, o escribe los datos.";
           reopen();
         }).catch(function (er) { ui.busy = ""; ui.msg = sampleErr(er && er.code); if (ui.edit) reopen(); });
         break;
@@ -1608,11 +1633,15 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         S.wish = S.wish.filter(function (x) { return x.id !== wdel; });
         persist(); afterSave(); toast("Quitado de deseos"); break;
       case "wish-to-lib":
+        /* «Ya lo tengo» abre el formulario de libro con los datos del deseo y busca el libro para confirmarlo y bajar su portada. */
         var wl = S.wish.filter(function (x) { return x.id === el.dataset.id; })[0];
         if (!wl) break;
-        S.books.push({ id: uid(), title: wl.title, author: wl.author || "", pages: wl.pages || 0, page: 0, status: "pendiente", rating: 0, color: COLORS[S.books.length % COLORS.length], notes: wl.notes || "", added: Date.now(), isbn: wl.isbn || "", cover: false, spine: "", ccolor: "", sagaId: wl.sagaId || "", vol: wl.vol || 0, lang: wl.lang || "", pub: wl.pub || "", editorial: wl.editorial || "", genre: wl.genre || "", summary: wl.summary || "", frags: [] });
-        S.wish = S.wish.filter(function (x) { return x.id !== wl.id; });
-        persist(); afterSave(); toast("Pasó a Mis libros como “Por leer”"); break;
+        if (ui.edit && ui.edit.kind === "wish" && ui.edit.id === wl.id && $("#bt")) { readEdit(); wl = ui.edit; }
+        ui.msg = ""; ui.busy = ""; ui.confirm = false; ui.picks = null; ui.cand = null;
+        ui.edit = { id: "", fromWish: wl.id, title: wl.title || "", author: wl.author || "", pages: wl.pages || 0, page: 0, status: "leyendo", rating: 0, color: COLORS[S.books.length % COLORS.length], notes: wl.notes || "", isbn: wl.isbn || "", cover: false, sagaId: wl.sagaId || "", vol: wl.vol || 0, lang: wl.lang || "", pub: wl.pub || "", editorial: wl.editorial || "", genre: wl.genre || "", summary: wl.summary || "" };
+        bookSheet();
+        if (canFind() && (validIsbn(ui.edit.isbn) || ui.edit.title.trim())) act({ dataset: { act: validIsbn(ui.edit.isbn) ? "isbn-search" : "title-search" } });
+        break;
       case "add-saga": ui.confirm = false; ui.back = null; sagaSheet(""); break;
       case "open-saga": ui.confirm = false; ui.back = null; sagaSheet(el.dataset.id); break;
       case "save-saga":
@@ -1644,13 +1673,13 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
       case "title-search":
         readEdit(); e = ui.edit;
         var tq = (e.title || "").trim(), aq = (e.author || "").trim();
-        if (!tq) { ui.msg = "Escribe el título (y si puedes, el autor) para buscar."; reopen(); break; }
+        if (!tq && !(aq && !sample)) { ui.msg = "Escribe el título o el autor para buscar."; reopen(); break; }
         ui.busy = "title"; ui.msg = ""; reopen();
         if (!sample) {
           findTitles(tq, aq).then(function (list) {
             ui.busy = ""; if (!ui.edit) return;
-            if (!list.length) { ui.msg = aq ? "No encontré libros con ese título y autor. Revisa cómo están escritos o llena los datos a mano." : "No encontré libros con ese título. Agrega el autor o llena los datos a mano."; reopen(); return; }
-            ui.picks = list; ui.pickQ = tq; pickSheet(tq);
+            if (!list.length) { ui.msg = !tq ? "No encontré libros de ese autor. Revisa cómo está escrito." : aq ? "No encontré libros con ese título y autor. Revisa cómo están escritos o llena los datos a mano." : "No encontré libros con ese título. Agrega el autor o llena los datos a mano."; reopen(); return; }
+            ui.picks = list; ui.pickQ = tq || aq; pickSheet(ui.pickQ);
           }).catch(function (er) { ui.busy = ""; ui.msg = sampleErr(er && er.code); if (ui.edit) reopen(); });
           break;
         }
@@ -1693,8 +1722,8 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
       case "cand-no":
         ui.cand = null;
         if (ui.picks) { pickSheet(ui.pickQ || ""); break; }
-        ui.convMsg = ""; ui.msg = "Prueba con “Buscar por título y autor” para ver más opciones, o llena los datos a mano."; reopen(); break;
-      case "pick-none": ui.picks = null; ui.msg = "Prueba agregando el autor para afinar la búsqueda, o llena los datos a mano."; reopen(); break;
+        ui.convMsg = ""; ui.msg = "Prueba con la lupa del título o del autor para ver más opciones, o llena los datos a mano."; reopen(); break;
+      case "pick-none": ui.picks = null; ui.msg = "Prueba agregando el autor y tocando su lupa para afinar la búsqueda, o llena los datos a mano."; reopen(); break;
       case "finish-card":
         var fbk0 = bookById(el.dataset.id); if (!fbk0) break;
         openSheet("<h2>Terminar libro</h2><p class='sub'>" + esc(fbk0.title) + "</p><div class='stack'>" +
