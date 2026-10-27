@@ -1295,27 +1295,67 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     return c === "offline" ? "Sin conexión. Conéctate a internet para buscar." : c === "not_granted" ? "No diste permiso para usar Claude en esta página." : c === "rate_limited" ? "Demasiadas consultas seguidas. Intenta en un momento." : "No pude consultar ahora. Intenta de nuevo.";
   }
 
-  /* Fuera de Claude, los datos del libro se buscan en Open Library. */
+  /* Fuera de Claude, los datos del libro se buscan en Open Library y Google Books, probando varias formas. */
   function canFind() { return !!sample || !inClaude; }
   var OL_LANG = { spa: "Español", eng: "Inglés", fre: "Francés", por: "Portugués", ita: "Italiano", ger: "Alemán", jpn: "Japonés" };
-  function olFetch(url) {
+  var GB_LANG = { es: "Español", en: "Inglés", fr: "Francés", pt: "Portugués", it: "Italiano", de: "Alemán", ja: "Japonés" };
+  function getJson(url) {
     if (navigator.onLine === false) return Promise.reject({ code: "offline" });
-    return fetch(url).then(function (r) { if (!r.ok) throw { code: "ol" }; return r.json(); });
+    return fetch(url).then(function (r) { if (!r.ok) throw { code: "net" }; return r.json(); });
   }
-  function olIsbn(code) {
-    return olFetch("https://openlibrary.org/api/books?bibkeys=ISBN:" + code + "&format=json&jscmd=data").then(function (j) {
+  function firstFound(tries) {
+    var i = 0, answered = false, err = null;
+    function next() {
+      if (i >= tries.length) return answered || !err ? { encontrado: false } : Promise.reject(err);
+      return tries[i++]().then(function (r) { answered = true; return r && r.encontrado ? r : next(); }, function (er) { err = err || er; return next(); });
+    }
+    return Promise.resolve().then(next);
+  }
+  function olBooks(code) {
+    return getJson("https://openlibrary.org/api/books?bibkeys=ISBN:" + code + "&format=json&jscmd=data").then(function (j) {
       var d = j && j["ISBN:" + code];
       if (!d || !d.title) return { encontrado: false };
-      return { encontrado: true, titulo: d.title + (d.subtitle ? ": " + d.subtitle : ""), autor: (d.authors || []).map(function (a) { return a.name; }).join(", "), paginas: d.number_of_pages || null, publicacion: d.publish_date || "", editorial: ((d.publishers || [])[0] || {}).name || "" };
+      return { encontrado: true, src: "Open Library", titulo: d.title + (d.subtitle ? ": " + d.subtitle : ""), autor: (d.authors || []).map(function (a) { return a.name; }).join(", "), paginas: d.number_of_pages || null, publicacion: d.publish_date || "", editorial: ((d.publishers || [])[0] || {}).name || "" };
     });
   }
-  function olTitle(t, a) {
-    return olFetch("https://openlibrary.org/search.json?limit=1&fields=title,author_name,number_of_pages_median,first_publish_year,language&title=" + encodeURIComponent(t) + (a ? "&author=" + encodeURIComponent(a) : "")).then(function (j) {
+  function olSearch(params) {
+    return getJson("https://openlibrary.org/search.json?limit=1&fields=title,author_name,number_of_pages_median,first_publish_year,language,publisher&" + params).then(function (j) {
       var d = j && (j.docs || [])[0];
       if (!d || !d.title) return { encontrado: false };
       var lg = (d.language || []).length === 1 ? OL_LANG[d.language[0]] || "" : "";
-      return { encontrado: true, titulo: d.title, autor: (d.author_name || []).slice(0, 2).join(", "), paginas: d.number_of_pages_median || null, publicacion: d.first_publish_year ? String(d.first_publish_year) : "", idioma: lg };
+      return { encontrado: true, src: "Open Library", titulo: d.title, autor: (d.author_name || []).slice(0, 2).join(", "), paginas: d.number_of_pages_median || null, publicacion: d.first_publish_year ? String(d.first_publish_year) : "", idioma: lg, editorial: (d.publisher || [])[0] || "" };
     });
+  }
+  function gBooks(q) {
+    return getJson("https://www.googleapis.com/books/v1/volumes?maxResults=1&q=" + encodeURIComponent(q)).then(function (j) {
+      var v = j && j.items && j.items[0] && j.items[0].volumeInfo;
+      if (!v || !v.title) return { encontrado: false };
+      return { encontrado: true, src: "Google Books", titulo: v.title + (v.subtitle ? ": " + v.subtitle : ""), autor: (v.authors || []).join(", "), paginas: v.pageCount || null, publicacion: v.publishedDate || "", editorial: v.publisher || "", idioma: GB_LANG[v.language] || "", genero: (v.categories || [])[0] || "", resumen: String(v.description || "").replace(/<[^>]*>/g, "") };
+    });
+  }
+  function isbnAlt(c) {
+    var i, s = 0;
+    if (c.length === 10) { var b = "978" + c.slice(0, 9); for (i = 0; i < 12; i++) s += (+b[i]) * (i % 2 ? 3 : 1); return b + ((10 - s % 10) % 10); }
+    if (/^978\d{10}$/.test(c)) { var d = c.slice(3, 12); for (i = 0; i < 9; i++) s += (10 - i) * (+d[i]); var k = (11 - s % 11) % 11; return d + (k === 10 ? "X" : String(k)); }
+    return "";
+  }
+  function findIsbn(code) {
+    var alt = isbnAlt(code), tries = [
+      function () { return olBooks(code); },
+      function () { return gBooks("isbn:" + code); },
+      function () { return olSearch("isbn=" + code); }
+    ];
+    if (alt) tries.push(function () { return olBooks(alt); }, function () { return gBooks("isbn:" + alt); });
+    return firstFound(tries);
+  }
+  function findTitle(t, a) {
+    var tq = "title=" + encodeURIComponent(t), tries = [];
+    if (a) tries.push(function () { return olSearch(tq + "&author=" + encodeURIComponent(a)); });
+    tries.push(function () { return gBooks("intitle:" + t + (a ? " inauthor:" + a : "")); });
+    tries.push(function () { return olSearch(tq); });
+    tries.push(function () { return olSearch("q=" + encodeURIComponent(t + (a ? " " + a : ""))); });
+    tries.push(function () { return gBooks(t + (a ? " " + a : "")); });
+    return firstFound(tries);
   }
 
   function inkFor(hex) {
@@ -1408,13 +1448,13 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         var code = validIsbn(e.isbn || "");
         if (!code) { ui.msg = "Ese ISBN no es válido. Revisa los 10 o 13 dígitos."; reopen(); break; }
         e.isbn = code; ui.busy = "isbn"; ui.msg = ""; reopen();
-        (sample ? sample.json('Dame los datos del libro con ISBN ' + code + '. Responde solo con un objeto JSON: {"encontrado": true o false, "titulo": string, "autor": string, "paginas": número o null, "idioma": string, "genero": string (un solo género principal en español, por ejemplo Novela, Fantasía, Ciencia ficción, Misterio, Romance, Histórica, Terror, Biografía, Ensayo, Autoayuda, Poesía o Juvenil), "publicacion": string (año o fecha de la primera publicación), "resumen": string (2 o 3 frases, sin spoilers)}. Si no reconoces ese ISBN con seguridad, responde {"encontrado": false}. No inventes datos.', { modelTier: "quick" }) : olIsbn(code)).then(function (r) {
+        (sample ? sample.json('Dame los datos del libro con ISBN ' + code + '. Responde solo con un objeto JSON: {"encontrado": true o false, "titulo": string, "autor": string, "paginas": número o null, "idioma": string, "genero": string (un solo género principal en español, por ejemplo Novela, Fantasía, Ciencia ficción, Misterio, Romance, Histórica, Terror, Biografía, Ensayo, Autoayuda, Poesía o Juvenil), "publicacion": string (año o fecha de la primera publicación), "resumen": string (2 o 3 frases, sin spoilers)}. Si no reconoces ese ISBN con seguridad, responde {"encontrado": false}. No inventes datos.', { modelTier: "quick" }) : findIsbn(code)).then(function (r) {
           ui.busy = ""; if (!ui.edit) return;
           if (r && r.encontrado && r.titulo) {
             ui.edit.title = r.titulo; if (r.autor) ui.edit.author = r.autor; if (r.paginas) ui.edit.pages = +r.paginas || ui.edit.pages;
             fillInfo(ui.edit, r);
-            ui.msg = sample ? "Datos llenados. Revísalos: vienen de lo que Claude sabe del ISBN, no de una base de datos en línea." : "Datos llenados desde Open Library. Revísalos antes de guardar.";
-          } else ui.msg = "No reconocí ese ISBN. Escribe los datos o toma una foto de la portada.";
+            ui.msg = sample ? "Datos llenados. Revísalos: vienen de lo que Claude sabe del ISBN, no de una base de datos en línea." : "Datos llenados desde " + (r.src || "internet") + ". Revísalos antes de guardar.";
+          } else ui.msg = sample ? "No reconocí ese ISBN. Escribe los datos o toma una foto de la portada." : "No encontré ese ISBN en Open Library ni en Google Books. Prueba con “Buscar por título y autor” o escribe los datos.";
           reopen();
         }).catch(function (er) { ui.busy = ""; ui.msg = sampleErr(er && er.code); if (ui.edit) reopen(); });
         break;
@@ -1490,12 +1530,12 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         var tq = (e.title || "").trim(), aq = (e.author || "").trim();
         if (!tq) { ui.msg = "Escribe el título (y si puedes, el autor) para buscar."; reopen(); break; }
         ui.busy = "title"; ui.msg = ""; reopen();
-        (sample ? sample.json('Identifica este libro. Título: "' + tq.replace(/"/g, "'") + '"' + (aq ? '. Autor: "' + aq.replace(/"/g, "'") + '"' : "") + '. Usa el autor, si lo hay, para distinguirlo de otros libros con el mismo título. Responde solo con un objeto JSON: {"encontrado": true o false, "titulo": string (título completo y correcto), "autor": string (nombre completo), "paginas": número aproximado de páginas o null, "idioma": string (idioma original), "genero": string (un solo género principal en español, por ejemplo Novela, Fantasía, Ciencia ficción, Misterio, Romance, Histórica, Terror, Biografía, Ensayo, Autoayuda, Poesía o Juvenil), "publicacion": string (año o fecha de la primera publicación), "resumen": string (2 o 3 frases, sin spoilers)}. Si no estás seguro de cuál libro es, responde {"encontrado": false}. No inventes datos.', { modelTier: "quick" }) : olTitle(tq, aq)).then(function (r) {
+        (sample ? sample.json('Identifica este libro. Título: "' + tq.replace(/"/g, "'") + '"' + (aq ? '. Autor: "' + aq.replace(/"/g, "'") + '"' : "") + '. Usa el autor, si lo hay, para distinguirlo de otros libros con el mismo título. Responde solo con un objeto JSON: {"encontrado": true o false, "titulo": string (título completo y correcto), "autor": string (nombre completo), "paginas": número aproximado de páginas o null, "idioma": string (idioma original), "genero": string (un solo género principal en español, por ejemplo Novela, Fantasía, Ciencia ficción, Misterio, Romance, Histórica, Terror, Biografía, Ensayo, Autoayuda, Poesía o Juvenil), "publicacion": string (año o fecha de la primera publicación), "resumen": string (2 o 3 frases, sin spoilers)}. Si no estás seguro de cuál libro es, responde {"encontrado": false}. No inventes datos.', { modelTier: "quick" }) : findTitle(tq, aq)).then(function (r) {
           ui.busy = ""; if (!ui.edit) return;
           if (r && r.encontrado && r.titulo) {
             ui.edit.title = r.titulo; if (r.autor) ui.edit.author = r.autor; if (r.paginas) ui.edit.pages = +r.paginas || ui.edit.pages;
             fillInfo(ui.edit, r);
-            ui.msg = (sample ? "Datos llenados. Revísalos: vienen de lo que Claude sabe del libro, no de una base en línea." : "Datos llenados desde Open Library. Revísalos: puede ser otra edición o el título original.") + " El número de páginas cambia según la edición y el ISBN está en la contraportada.";
+            ui.msg = (sample ? "Datos llenados. Revísalos: vienen de lo que Claude sabe del libro, no de una base en línea." : "Datos llenados desde " + (r.src || "internet") + ". Revísalos: puede ser otra edición o el título original.") + " El número de páginas cambia según la edición y el ISBN está en la contraportada.";
           } else ui.msg = aq ? "No pude identificar ese libro con ese autor. Revisa cómo está escrito o llena los datos a mano." : "No pude identificar ese libro. Agrega el autor para afinar la búsqueda.";
           reopen();
         }).catch(function (er) { ui.busy = ""; ui.msg = sampleErr(er && er.code); if (ui.edit) reopen(); });
