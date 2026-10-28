@@ -761,7 +761,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     if (!withCover) h = '<div class="stack">' + f + "</div>";
     else {
       var csrc = e.removeCover ? "" : (e.coverData || COV[e.id] || "");
-      h = '<div class="idgrid"><div class="stack">' + f + '</div><div class="idcov"><div class="cov c-' + esc(e.color) + '" style="' + bgStyle(e) + '">' + (csrc ? '<img src="' + csrc + '" alt="Portada">' : (ui.busy === "cover" ? "Bajando portada…" : "Sin portada")) + "</div>" +
+      h = '<div class="idgrid"><div class="stack">' + f + '</div><div class="idcov"><div class="cov c-' + esc(e.color) + '" style="' + bgStyle(e) + '">' + (csrc ? '<img src="' + csrc + '" alt="Portada">' : (ui.coverBusy ? "Bajando portada…" : "Sin portada")) + "</div>" +
         '<button type="button" class="btn sm" data-act="pick-cover">' + (csrc ? "Cambiar foto" : "Tomar foto") + "</button>";
       if (e.coverBlob && sampleImg) h += '<button type="button" class="btn sm ghost" data-act="ocr-cover"' + (ui.busy ? " disabled" : "") + ">" + (ui.busy === "ocr" ? "Leyendo…" : "Leer datos") + "</button>";
       if (csrc) h += '<button type="button" class="btn sm ghost" data-act="rm-cover">Quitar</button>';
@@ -1338,16 +1338,22 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     fr.readAsDataURL(file);
   }
   function sampleErr(c) {
-    return c === "offline" ? "Sin conexión. Conéctate a internet para buscar." : c === "not_granted" ? "No diste permiso para usar Claude en esta página." : c === "rate_limited" ? "Demasiadas consultas seguidas. Intenta en un momento." : "No pude consultar ahora. Intenta de nuevo.";
+    return c === "offline" ? "Sin conexión. Conéctate a internet para buscar." : c === "timeout" ? "Las fuentes de libros tardaron demasiado en responder. Intenta de nuevo." : c === "not_granted" ? "No diste permiso para usar Claude en esta página." : c === "rate_limited" ? "Demasiadas consultas seguidas. Intenta en un momento." : "No pude consultar ahora. Intenta de nuevo.";
   }
 
   /* Fuera de Claude, los datos del libro se buscan en Open Library y Google Books, probando varias formas. */
   function canFind() { return !!sample || !inClaude; }
   var OL_LANG = { spa: "Español", eng: "Inglés", fre: "Francés", por: "Portugués", ita: "Italiano", ger: "Alemán", jpn: "Japonés" };
   var GB_LANG = { es: "Español", en: "Inglés", fr: "Francés", pt: "Portugués", it: "Italiano", de: "Alemán", ja: "Japonés" };
+  /* Toda consulta a internet se corta a los 15 s para que una fuente lenta no deje la búsqueda colgada. */
+  function fetchT(url, opts) {
+    var ctl = window.AbortController ? new AbortController() : null, t = ctl && setTimeout(function () { ctl.abort(); }, 15000);
+    opts = opts || {}; if (ctl) opts.signal = ctl.signal;
+    return fetch(url, opts).then(function (r) { clearTimeout(t); return r; }, function (er) { clearTimeout(t); throw er && er.name === "AbortError" ? { code: "timeout" } : er; });
+  }
   function getJson(url) {
     if (navigator.onLine === false) return Promise.reject({ code: "offline" });
-    return fetch(url).then(function (r) { if (!r.ok) throw { code: "net" }; return r.json(); });
+    return fetchT(url).then(function (r) { if (!r.ok) throw { code: "net" }; return r.json(); });
   }
   function firstFound(tries) {
     var i = 0, answered = false, err = null;
@@ -1434,7 +1440,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   function soft(p) { return p.catch(function (er) { return { err: er }; }); }
   function mergeLists(gp, op) {
     return Promise.all([gp, op]).then(function (r) {
-      if (r[0].err && r[1].err) throw r[0].err;
+      if (r[0].err && r[1].err) throw (r[1].err.code === "timeout" ? r[1].err : r[0].err);
       r = r.map(function (x) { return x.err ? null : x; });
       var g = r[0] || [], o = r[1] || [], out = [], seen = {};
       function key(c) { return (c.titulo + "|" + c.autor.split(",")[0]).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9|]+/g, ""); }
@@ -1480,7 +1486,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   function fetchCover(url) {
     var u = url.replace(/-[SM]\.jpg/, "-L.jpg").replace("&edge=curl", ""), via = "https://wsrv.nl/?url=" + encodeURIComponent(u) + "&output=jpg";
     function get(x) {
-      return fetch(x, { mode: "cors" }).then(function (r) { if (!r.ok) throw { code: "cover" }; return r.blob(); })
+      return fetchT(x, { mode: "cors" }).then(function (r) { if (!r.ok) throw { code: "cover" }; return r.blob(); })
         .then(function (b) { if (!/^image\//.test(b.type) || b.size < 1000) throw { code: "cover" }; return b; });
     }
     return get(u).catch(function () { return get(via); }).then(function (b) {
@@ -1592,9 +1598,10 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         var code = validIsbn(e.isbn || "");
         if (!code) { ui.msg = "Ese ISBN no es válido. Revisa los 10 o 13 dígitos."; reopen(); break; }
         var conv = code.length === 10 && isbn13(code) !== code;
-        code = isbn13(code); e.isbn = code; ui.busy = "isbn"; ui.msg = ""; reopen();
+        code = isbn13(code); e.isbn = code; ui.busy = "isbn"; ui.msg = sample ? "" : "Buscando el ISBN en Open Library y Google Books…"; ui.coverBusy = false; reopen();
+        var edI = e;
         (sample ? sample.json('Dame los datos del libro con ISBN ' + code + '. Responde solo con un objeto JSON: {"encontrado": true o false, "titulo": string, "autor": string, "paginas": número o null, "idioma": string, "genero": string (un solo género principal en español, por ejemplo Novela, Fantasía, Ciencia ficción, Misterio, Romance, Histórica, Terror, Biografía, Ensayo, Autoayuda, Poesía o Juvenil), "publicacion": string (año o fecha de la primera publicación), "resumen": string (2 o 3 frases, sin spoilers)}. Si no reconoces ese ISBN con seguridad, responde {"encontrado": false}. No inventes datos.', { modelTier: "quick" }) : findIsbn(code)).then(function (r) {
-          ui.busy = ""; if (!ui.edit) return;
+          ui.busy = ""; if (!ui.edit || ui.edit !== edI) return;
           if (r && r.encontrado && r.titulo && !sample) { ui.picks = null; ui.cand = r; ui.convMsg = conv ? "Convertí el ISBN-10 a su ISBN-13 oficial. " : ""; candSheet(); return; }
           if (r && r.encontrado && r.titulo) {
             ui.edit.title = r.titulo; if (r.autor) ui.edit.author = r.autor; if (r.paginas) ui.edit.pages = +r.paginas || ui.edit.pages;
@@ -1602,7 +1609,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
             ui.msg = "Datos llenados. Revísalos: vienen de lo que Claude sabe del ISBN, no de una base de datos en línea.";
           } else ui.msg = sample ? "No reconocí ese ISBN. Escribe los datos o toma una foto de la portada." : "No encontré ese ISBN en Open Library ni en Google Books. Prueba con la lupa del título o del autor, o escribe los datos.";
           reopen();
-        }).catch(function (er) { ui.busy = ""; ui.msg = sampleErr(er && er.code); if (ui.edit) reopen(); });
+        }).catch(function (er) { ui.busy = ""; if (!ui.edit || ui.edit !== edI) return; ui.msg = sampleErr(er && er.code); reopen(); });
         break;
       case "ocr-cover":
         readEdit(); e = ui.edit; if (!e.coverBlob) break;
@@ -1678,13 +1685,14 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         readEdit(); e = ui.edit;
         var tq = (e.title || "").trim(), aq = (e.author || "").trim();
         if (!tq && !(aq && !sample)) { ui.msg = "Escribe el título o el autor para buscar."; reopen(); break; }
-        ui.busy = "title"; ui.msg = ""; reopen();
+        ui.busy = "title"; ui.msg = sample ? "" : "Buscando “" + (tq || aq) + "” en Open Library y Google Books…"; ui.coverBusy = false; reopen();
         if (!sample) {
+          var edT = e;
           findTitles(tq, aq).then(function (list) {
-            ui.busy = ""; if (!ui.edit) return;
+            ui.busy = ""; if (!ui.edit || ui.edit !== edT) return;
             if (!list.length) { ui.msg = !tq ? "No encontré libros de ese autor. Revisa cómo está escrito." : aq ? "No encontré libros con ese título y autor. Revisa cómo están escritos o llena los datos a mano." : "No encontré libros con ese título. Agrega el autor o llena los datos a mano."; reopen(); return; }
             ui.picks = list; ui.pickQ = tq || aq; pickSheet(ui.pickQ);
-          }).catch(function (er) { ui.busy = ""; ui.msg = sampleErr(er && er.code); if (ui.edit) reopen(); });
+          }).catch(function (er) { ui.busy = ""; if (ui.edit !== edT) return; ui.msg = sampleErr(er && er.code); reopen(); });
           break;
         }
         sample.json('Identifica este libro. Título: "' + tq.replace(/"/g, "'") + '"' + (aq ? '. Autor: "' + aq.replace(/"/g, "'") + '"' : "") + '. Usa el autor, si lo hay, para distinguirlo de otros libros con el mismo título. Responde solo con un objeto JSON: {"encontrado": true o false, "titulo": string (título completo y correcto), "autor": string (nombre completo), "paginas": número aproximado de páginas o null, "idioma": string (idioma original), "genero": string (un solo género principal en español, por ejemplo Novela, Fantasía, Ciencia ficción, Misterio, Romance, Histórica, Terror, Biografía, Ensayo, Autoayuda, Poesía o Juvenil), "publicacion": string (año o fecha de la primera publicación), "resumen": string (2 o 3 frases, sin spoilers)}. Si no estás seguro de cuál libro es, responde {"encontrado": false}. No inventes datos.', { modelTier: "quick" }).then(function (r) {
@@ -1708,19 +1716,21 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         ui.msg = (ui.convMsg || "") + applyCand(cy); ui.convMsg = "";
         if (ed.kind === "wish" || !curl) { reopen(); break; }
         if (keep) { ui.msg += " Conservé la portada que ya tenías."; reopen(); break; }
-        ui.busy = "cover"; reopen();
+        ui.coverBusy = true; reopen();
         fetchCover(curl).then(function (r) {
+          ui.coverBusy = false;
           if (ui.edit !== ed) return;
           readEdit();
           ed.coverData = r.small; ed.coverBlob = r.blob; ed.removeCover = false;
           if (r.col) { ed.ccolor = r.col; ed.spine = r.col; }
-          ui.busy = ""; ui.msg += " La portada se guardará con el libro.";
-          if ($("#bt")) reopen();
+          ui.msg += " La portada se guardará con el libro.";
+          if ($("#bt") && !ui.busy) reopen();
         }).catch(function () {
+          ui.coverBusy = false;
           if (ui.edit !== ed) return;
           readEdit();
-          ui.busy = ""; ui.msg += " No pude bajar la portada: puedes tomarle una foto con “Foto de portada”.";
-          if ($("#bt")) reopen();
+          ui.msg += " No pude bajar la portada: puedes tomarle una foto con “Tomar foto”.";
+          if ($("#bt") && !ui.busy) reopen();
         });
         break;
       case "cand-no":
