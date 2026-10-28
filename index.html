@@ -645,7 +645,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
 
   function vDeseos() {
     var h = "<p class='sub'>" + S.wish.length + (S.wish.length === 1 ? " libro" : " libros") + " por leer algún día</p>";
-    if (!S.wish.length) return h + '<div class="empty"><b>Tu lista de deseos está vacía</b>Toca “+ Deseo” y búscalo por nombre o por ISBN.</div>';
+    if (!S.wish.length) return h + '<div class="empty"><b>Tu lista de deseos está vacía</b>Toca “+ Deseo” y búscalo por título o por autor.</div>';
     h += '<div class="stack">';
     S.wish.slice().reverse().forEach(function (w) {
       var c = COLORS[hash(w.id) % COLORS.length];
@@ -681,10 +681,13 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     return h + '</select><input id="bsv" type="number" inputmode="numeric" min="1" placeholder="Nº" aria-label="Número en la saga" value="' + (e.vol || "") + '"></div></div>';
   }
 
+  function genreField(e) {
+    return '<div class="field"><label class="label" for="bgn">Género</label><input id="bgn" list="genres" type="text" placeholder="Ej. Fantasía" value="' + esc(e.genre) + '"><datalist id="genres"><option value="Novela"><option value="Fantasía"><option value="Ciencia ficción"><option value="Misterio"><option value="Romance"><option value="Histórica"><option value="Terror"><option value="Biografía"><option value="Ensayo"><option value="Autoayuda"><option value="Poesía"><option value="Juvenil"><option value="Infantil"><option value="Clásico"><option value="Negocios"><option value="Ciencia"><option value="Cómic"></datalist></div>';
+  }
   function infoMeta(e) {
     return '<div class="grid2"><div class="field"><label class="label" for="bil">Idioma</label><input id="bil" list="langs" type="text" placeholder="Español" value="' + esc(e.lang) + '"><datalist id="langs"><option value="Español"><option value="Inglés"><option value="Francés"><option value="Portugués"><option value="Italiano"><option value="Alemán"><option value="Japonés"></datalist></div>' +
       '<div class="field"><label class="label" for="bpb">Publicación</label><input id="bpb" type="text" placeholder="Ej. 1967" value="' + esc(e.pub) + '"></div></div>' +
-      '<div class="field"><label class="label" for="bgn">Género</label><input id="bgn" list="genres" type="text" placeholder="Ej. Fantasía" value="' + esc(e.genre) + '"><datalist id="genres"><option value="Novela"><option value="Fantasía"><option value="Ciencia ficción"><option value="Misterio"><option value="Romance"><option value="Histórica"><option value="Terror"><option value="Biografía"><option value="Ensayo"><option value="Autoayuda"><option value="Poesía"><option value="Juvenil"><option value="Infantil"><option value="Clásico"><option value="Negocios"><option value="Ciencia"><option value="Cómic"></datalist></div>' +
+      genreField(e) +
       '<div class="field"><label class="label" for="bed">Editorial</label><input id="bed" type="text" placeholder="Ej. Penguin Random House" value="' + esc(e.editorial) + '"></div>';
   }
   function resumenField(e) {
@@ -754,7 +757,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   }
   /* ISBN, título y autor, cada uno con su lupa; en libros, la portada va a la derecha. */
   function idBlock(e, withCover) {
-    var f = qField("bi", "ISBN", e.isbn, "isbn-search", 'inputmode="numeric" placeholder="978…"') + qField("bt", "Título", e.title, "title-search", "data-focus") + qField("ba", "Autor", e.author, "title-search", ""), h;
+    var f = (withCover ? qField("bi", "ISBN", e.isbn, "isbn-search", 'inputmode="numeric" placeholder="978…"') : "") + qField("bt", "Título", e.title, "title-search", "data-focus") + qField("ba", "Autor", e.author, "title-search", ""), h;
     if (!withCover) h = '<div class="stack">' + f + "</div>";
     else {
       var csrc = e.removeCover ? "" : (e.coverData || COV[e.id] || "");
@@ -765,17 +768,15 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
       h += '<input id="cov" type="file" accept="image/*" hidden></div></div>';
     }
     if (ui.msg) h += '<p class="msg">' + esc(ui.msg) + "</p>";
-    else if (canFind()) h += '<p class="msg">Toca la lupa junto al ISBN, el título o el autor para buscar el libro.</p>';
+    else if (canFind()) h += '<p class="msg">' + (!withCover ? "Toca la lupa del título o del autor para encontrar el libro. El ISBN, las páginas y los demás datos se llenan cuando lo pases a tus libros con “Ya lo tengo”." : e.fromWish ? "Toca la lupa del título o del autor para elegir tu edición y llenar sus datos y su portada." : "Toca la lupa junto al ISBN, el título o el autor para buscar el libro.") + "</p>";
     return h;
   }
   function wishSheet() {
     var e = ui.edit, isNew = !e.id;
     var h = "<h2>" + (isNew ? "Libro deseado" : "Editar deseo") + '</h2><div class="stack">';
     h += idBlock(e, false);
-    h += '<div class="field"><label class="label" for="bp">Páginas</label><input id="bp" type="number" inputmode="numeric" min="0" value="' + (e.pages || "") + '"></div>';
-    h += infoMeta(e);
+    h += genreField(e);
     h += sagaFields(e);
-    h += resumenField(e);
     h += '<button class="btn primary block" data-act="save-wish">Guardar</button>';
     if (!isNew) {
       h += '<button class="btn block" data-act="wish-to-lib" data-id="' + esc(e.id) + '">Ya lo tengo: pasar a mis libros</button>';
@@ -1267,8 +1268,8 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   function readEdit() {
     var e = ui.edit;
     if (!$("#bt")) return;
-    e.title = $("#bt").value; e.author = $("#ba").value; e.isbn = $("#bi").value;
-    e.pages = parseInt($("#bp").value, 10) || 0; if ($("#bc")) e.page = parseInt($("#bc").value, 10) || 0;
+    e.title = $("#bt").value; e.author = $("#ba").value; if ($("#bi")) e.isbn = $("#bi").value;
+    if ($("#bp")) e.pages = parseInt($("#bp").value, 10) || 0; if ($("#bc")) e.page = parseInt($("#bc").value, 10) || 0;
     if ($("#byr")) e.year = parseInt($("#byr").value, 10) || 0;
     if ($("#bsg")) { e.sagaId = $("#bsg").value; e.vol = parseInt($("#bsv").value, 10) || 0; }
     if ($("#bil")) e.lang = $("#bil").value.trim();
@@ -1472,7 +1473,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     h += "<span class='tag' style='align-self:flex-start;margin-top:4px'>" + esc(c.src || "") + "</span></div></div></div>";
     if (c.resumen) h += "<p class='msg clamp' style='font-size:12.5px;margin-top:12px'>" + esc(c.resumen) + "</p>";
     if (!img) h += "<p class='msg' style='margin-top:10px'>Esta fuente no trae portada.</p>";
-    h += "<div class='stack' style='margin-top:14px'><button class='btn primary block' data-act='cand-yes'>" + (img && ui.edit && ui.edit.kind !== "wish" && !coverIn(ui.edit) ? "Sí, usar estos datos y la portada" : "Sí, llenar con estos datos") + "</button><button class='btn ghost block' data-act='cand-no'>" + (ui.picks ? "No es este, volver a la lista" : "No es este") + "</button></div>";
+    h += "<div class='stack' style='margin-top:14px'><button class='btn primary block' data-act='cand-yes'>" + (ui.edit && ui.edit.kind === "wish" ? "Sí, usar este título y autor" : img && ui.edit && !coverIn(ui.edit) ? "Sí, usar estos datos y la portada" : "Sí, llenar con estos datos") + "</button><button class='btn ghost block' data-act='cand-no'>" + (ui.picks ? "No es este, volver a la lista" : "No es este") + "</button></div>";
     openSheet(h);
   }
   /* Baja la portada del libro elegido para guardarla; si el sitio no deja leerla, la pide a través de wsrv.nl. */
@@ -1489,6 +1490,10 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   function coverIn(e) { return !!(e.coverData || (COV[e.id] && !e.removeCover)); }
   function applyCand(c) {
     var e = ui.edit;
+    if (e.kind === "wish") {
+      e.title = c.titulo; if (c.autor) e.author = c.autor; if (c.genero && !e.genre) e.genre = c.genero;
+      return "Título y autor tomados de " + c.src + ". El resto de los datos se llena cuando lo pases a tus libros.";
+    }
     e.title = c.titulo; if (c.autor) e.author = c.autor; if (c.paginas) e.pages = +c.paginas || e.pages;
     if (c.isbn) e.isbn = normIsbn(c.isbn);
     if (c.idioma) e.lang = c.idioma; if (c.publicacion) e.pub = String(c.publicacion); if (c.editorial) e.editorial = c.editorial;
@@ -1623,7 +1628,8 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
       case "save-wish":
         readEdit(); e = ui.edit;
         if (!e.title.trim()) { toast("Escribe el título del libro"); break; }
-        var wrec = { id: e.id || uid(), title: e.title.trim(), author: e.author.trim(), pages: e.pages, isbn: normIsbn(e.isbn), notes: e.notes, sagaId: e.sagaId || "", vol: e.vol || 0, lang: e.lang || "", pub: e.pub || "", editorial: e.editorial || "", genre: e.genre || "", summary: e.summary || "", added: e.added || Date.now() };
+        var wold = S.wish.filter(function (x) { return x.id === e.id; })[0] || {};
+        var wrec = { id: e.id || uid(), title: e.title.trim(), author: e.author.trim(), pages: wold.pages || 0, isbn: wold.isbn || "", notes: wold.notes || "", sagaId: e.sagaId || "", vol: e.vol || 0, lang: wold.lang || "", pub: wold.pub || "", editorial: wold.editorial || "", genre: e.genre || "", summary: wold.summary || "", added: e.added || Date.now() };
         var wi2 = S.wish.map(function (x) { return x.id; }).indexOf(wrec.id);
         if (wi2 > -1) S.wish[wi2] = wrec; else S.wish.push(wrec);
         bumpSaga(wrec); persist(); afterSave(); toast("Guardado en deseos"); break;
@@ -1633,15 +1639,13 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         S.wish = S.wish.filter(function (x) { return x.id !== wdel; });
         persist(); afterSave(); toast("Quitado de deseos"); break;
       case "wish-to-lib":
-        /* «Ya lo tengo» abre el formulario de libro con los datos del deseo y busca el libro para confirmarlo y bajar su portada. */
+        /* «Ya lo tengo» abre el mismo formulario que «+ Libro», con el título y el autor del deseo; la lupa busca los demás datos. */
         var wl = S.wish.filter(function (x) { return x.id === el.dataset.id; })[0];
         if (!wl) break;
         if (ui.edit && ui.edit.kind === "wish" && ui.edit.id === wl.id && $("#bt")) { readEdit(); wl = ui.edit; }
         ui.msg = ""; ui.busy = ""; ui.confirm = false; ui.picks = null; ui.cand = null;
-        ui.edit = { id: "", fromWish: wl.id, title: wl.title || "", author: wl.author || "", pages: wl.pages || 0, page: 0, status: "leyendo", rating: 0, color: COLORS[S.books.length % COLORS.length], notes: wl.notes || "", isbn: wl.isbn || "", cover: false, sagaId: wl.sagaId || "", vol: wl.vol || 0, lang: wl.lang || "", pub: wl.pub || "", editorial: wl.editorial || "", genre: wl.genre || "", summary: wl.summary || "" };
-        bookSheet();
-        if (canFind() && (validIsbn(ui.edit.isbn) || ui.edit.title.trim())) act({ dataset: { act: validIsbn(ui.edit.isbn) ? "isbn-search" : "title-search" } });
-        break;
+        ui.edit = { id: "", fromWish: wl.id, isbn: "", cover: false, title: wl.title || "", author: wl.author || "", pages: 0, page: 0, status: "leyendo", rating: 0, color: COLORS[S.books.length % COLORS.length], notes: "", sagaId: wl.sagaId || "", vol: wl.vol || 0, genre: wl.genre || "" };
+        bookSheet(); break;
       case "add-saga": ui.confirm = false; ui.back = null; sagaSheet(""); break;
       case "open-saga": ui.confirm = false; ui.back = null; sagaSheet(el.dataset.id); break;
       case "save-saga":
