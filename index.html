@@ -399,6 +399,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   function persist() {
     S.updated = Date.now();
     try { localStorage.setItem(LS, JSON.stringify(S)); } catch (e) {}
+    timerNote();
     clearTimeout(saveT);
     saveT = setTimeout(flush, 500);
   }
@@ -873,6 +874,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
       h += t.run ? '<button class="btn block" data-act="pause">Pausar</button>' : '<button class="btn block" data-act="resume">Continuar</button>';
       h += '<button class="btn primary block" data-act="finish">Terminar</button></div>';
       h += '<div class="row" style="margin-top:10px"><button class="btn ghost block" data-act="to-dict">Buscar palabra</button></div>';
+      if (canNotify() && Notification.permission === "default") h += '<div class="note" style="margin-top:12px"><span>Activa las notificaciones para ver la sesión en tu barra de notificaciones y pausarla o terminarla desde ahí.</span><button data-act="notif-on">Activar</button></div>';
     } else {
       h += "<p class='sub'>Toca el cronómetro de un libro para empezar. Al terminar anotas hasta qué página llegaste.</p>";
     }
@@ -1893,9 +1895,11 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
       case "start-card":
         if (S.timer) { toast("Ya hay una sesión en curso"); break; }
         var bk = bookById(el.dataset.id); if (!bk) break;
+        askNotify();
         S.timer = { bookId: bk.id, from: bk.page || 0, acc: 0, run: Date.now() };
         if (bk.status === "pendiente") bk.status = "leyendo";
         persist(); requestWake(); render(); break;
+      case "notif-on": askNotify(true); break;
       case "pause": S.timer.acc += Date.now() - S.timer.run; S.timer.run = null; persist(); releaseWake(); render(); break;
       case "resume": S.timer.run = Date.now(); persist(); requestWake(); render(); break;
       case "finish":
@@ -2220,9 +2224,48 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   }
   setInterval(tick, 1000);
 
+  /* ---------- cronómetro en la barra de notificaciones ---------- */
+  var lastNote = "";
+  function canNotify() { return !inClaude && "serviceWorker" in navigator && "Notification" in window && !!window.ServiceWorkerRegistration && "showNotification" in ServiceWorkerRegistration.prototype; }
+  function askNotify(force) {
+    if (!canNotify() || Notification.permission !== "default") { if (force && canNotify() && Notification.permission === "denied") toast("Las notificaciones están bloqueadas. Actívalas en los ajustes del teléfono para esta app."); return; }
+    try { var pr = Notification.requestPermission(function () { lastNote = ""; timerNote(); if (ui.tab === "leer" && !ui.sheet) render(); }); if (pr && pr.then) pr.then(function () { lastNote = ""; timerNote(); if (ui.tab === "leer" && !ui.sheet) render(); }); } catch (e) {}
+  }
+  function timerNote() {
+    if (!canNotify() || Notification.permission !== "granted") return;
+    var t = S.timer, b = t && bookById(t.bookId), d = t ? { title: b ? b.title : "tu libro", run: t.run || null, acc: t.acc || 0 } : null, sig = JSON.stringify(d);
+    if (sig === lastNote) return;
+    lastNote = sig;
+    navigator.serviceWorker.ready.then(function (reg) { if (reg.active) reg.active.postMessage({ type: "timer-draw", data: d }); }).catch(function () {});
+  }
+  /* Botones de la notificación: llegan como mensaje si la app está abierta, o se aplican al abrirla. */
+  function timerEvent(m) {
+    if (!m || m.type !== "timer") return;
+    var t = S.timer;
+    if ((m.action === "pause" || m.action === "finish") && t && t.run && m.at > t.run) { t.acc += m.at - t.run; t.run = null; releaseWake(); persist(); }
+    else if (m.action === "resume" && t && !t.run) { t.run = m.at; requestWake(); persist(); }
+    if (m.action === "finish" && S.timer) { closeSheet(); ui.tab = "leer"; render(); window.scrollTo(0, 0); finishSheet(); }
+    else if (m.action === "open") { if (!ui.sheet) setTab("leer"); }
+    else if (!ui.sheet) render();
+  }
+  function takePending() {
+    if (!window.caches || inClaude) return;
+    caches.open("diario-pending").then(function (c) {
+      return c.match("pending").then(function (r) {
+        if (!r) return;
+        return r.json().then(function (list) { return c.delete("pending").then(function () { (list || []).forEach(timerEvent); }); });
+      });
+    }).catch(function () {});
+  }
+  if (/[?&]leer=1/.test(location.search)) { ui.tab = "leer"; try { history.replaceState(null, "", location.pathname); } catch (e) {} }
+
   if (!inClaude) {
     if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
       window.addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () {}); });
+      navigator.serviceWorker.addEventListener("message", function (ev) { timerEvent(ev.data); });
+      takePending();
+      timerNote();
+      document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") takePending(); });
     }
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {}); } catch (e) {}
     window.addEventListener("beforeinstallprompt", function (ev) { ev.preventDefault(); ui.installEvt = ev; if (!ui.sheet) render(); });
