@@ -321,6 +321,12 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
 .slot .num { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 11.5px; display: grid; place-items: center; }
 .slotb { text-align: left; width: 100%; min-height: 40px; }
 .btn.sm { min-height: 38px; padding: 0 10px; font-size: 11.5px; flex: none; }
+/* diccionario: palabra + página */
+.dform { display: flex; gap: 8px; }
+.dform #dq { flex: 1; min-width: 0; }
+.dform #dp { flex: none; width: 76px; }
+.dform .btn { flex: none; }
+.pgb { font-size: 11.5px; font-weight: 700; color: var(--accent); background: var(--accent-soft); border-radius: 99px; padding: 3px 9px; min-height: 26px; white-space: nowrap; }
 /* resultados de búsqueda */
 .pick { align-items: center; }
 .pcov { position: relative; flex: none; width: 46px; height: 66px; border-radius: 4px 8px 8px 4px; overflow: hidden; display: grid; place-items: center; font-family: var(--display); font-size: 20.5px; box-shadow: inset 4px 0 0 rgba(0, 0, 0, .08); }
@@ -910,20 +916,20 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     return r ? r.id : "";
   }
   function wordCard(w) {
-    return '<div class="card"><div class="row spread" style="align-items:flex-start"><div style="min-width:0"><b style="font-size:16.5px;overflow-wrap:anywhere">' + esc(w.word) + '</b> <span class="meta">' + esc(w.pos || "") + '</span></div><button class="x" data-act="del-word" data-id="' + esc(w.id) + '" aria-label="Borrar ' + esc(w.word) + '">✕</button></div>' +
+    return '<div class="card"><div class="row spread" style="align-items:flex-start"><div style="min-width:0"><b style="font-size:16.5px;overflow-wrap:anywhere">' + esc(w.word) + '</b> <span class="meta">' + esc(w.pos || "") + '</span><div style="margin-top:4px"><button type="button" class="pgb" data-act="word-page" data-id="' + esc(w.id) + '" aria-label="' + (w.page ? "Cambiar la página de " : "Agregar la página de ") + esc(w.word) + '">' + (w.page ? "p. " + w.page + " ✎" : "+ página") + '</button></div></div><button class="x" data-act="del-word" data-id="' + esc(w.id) + '" aria-label="Borrar ' + esc(w.word) + '">✕</button></div>' +
       (w.tr ? '<div class="def"><b>' + esc(w.tr) + "</b></div>" : "") +
       '<div class="def">' + esc(w.def) + "</div>" +
       (w.ex ? '<div class="meta" style="font-style:italic">“' + esc(w.ex) + "”</div>" : "") + (w.src ? '<div class="meta" style="margin-top:4px">Fuente: ' + esc(w.src) + "</div>" : "") + "</div>";
   }
 
   function vPalabras() {
-    var h = "<h1>Diccionario</h1><p class='sub'>Escribe una palabra y se guarda sola, con su significado, en el libro que elijas.</p>";
+    var h = "<h1>Diccionario</h1><p class='sub'>Escribe una palabra y, si quieres, la página donde la encontraste. Se guarda sola, con su significado, en el libro que elijas.</p>";
     if (!S.books.length) return h + '<div class="empty"><b>Primero agrega un libro</b>Las palabras se guardan por libro.</div>';
     var cur = curDictBook();
     h += '<div class="field" style="margin-bottom:10px"><label class="label" for="wbook">Libro</label><select id="wbook">';
     S.books.forEach(function (b) { h += '<option value="' + esc(b.id) + '"' + (b.id === cur ? " selected" : "") + ">" + esc(b.title) + "</option>"; });
     h += "</select></div>";
-    h += '<form id="dform" class="row" autocomplete="off"><input id="dq" type="text" inputmode="text" autocapitalize="none" placeholder="Palabra o expresión" value="' + esc(ui.q) + '" aria-label="Palabra"><button class="btn primary" type="submit"' + (ui.loading ? " disabled" : "") + ">Buscar</button></form>";
+    h += '<form id="dform" class="dform" autocomplete="off"><input id="dq" type="text" inputmode="text" autocapitalize="none" placeholder="Palabra o expresión" value="' + esc(ui.q) + '" aria-label="Palabra"><input id="dp" type="number" inputmode="numeric" min="1" placeholder="Pág." value="' + esc(ui.qPage || "") + '" aria-label="Página donde la encontraste (opcional)"><button class="btn primary" type="submit"' + (ui.loading ? " disabled" : "") + ">Buscar</button></form>";
     if (ui.loading) h += '<p class="meta" style="margin:12px 0">Buscando y guardando…</p>';
     if (ui.err) h += '<p class="meta" style="margin:12px 0;color:var(--warn)">' + esc(ui.err) + "</p>";
     if (!sample && inClaude && !ui.loading) h += '<p class="meta" style="margin:12px 0">La búsqueda automática no está disponible aquí. Escribe la palabra y su significado para guardarla.</p>';
@@ -935,7 +941,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
       if (r.ejemplo) h += '<p class="def meta" style="font-style:italic">“' + esc(r.ejemplo) + "”</p>";
       if (r.sinonimos && r.sinonimos.length) h += '<p class="meta">Sinónimos: ' + esc(r.sinonimos.join(", ")) + "</p>";
       if (r.src) h += '<p class="meta">Fuente: <a href="' + esc(r.url) + '" target="_blank" rel="noopener" style="color:inherit">' + esc(r.src) + "</a></p>";
-      h += '<div class="row spread" style="margin-top:10px"><span class="tag" style="white-space:normal">' + (r.dup ? "Ya estaba en " : "Guardada en ") + esc(rb ? rb.title : "tu lista") + '</span><button class="btn ghost" style="min-height:40px" data-act="del-word" data-id="' + esc(r.id) + '">Quitar</button></div></div>';
+      h += '<div class="row spread" style="margin-top:10px"><span class="tag" style="white-space:normal">' + (r.dup ? "Ya estaba en " : "Guardada en ") + esc(rb ? rb.title : "tu lista") + (r.page ? " · p. " + r.page : "") + '</span><button class="btn ghost" style="min-height:40px" data-act="del-word" data-id="' + esc(r.id) + '">Quitar</button></div></div>';
     } else if (!sample && !ui.loading && ui.q.trim()) {
       h += '<div class="card stack" style="margin-top:14px"><div class="field"><label class="label" for="mdef">Significado de “' + esc(ui.q.trim()) + '”</label><textarea id="mdef" placeholder="Escribe qué significa"></textarea></div><button class="btn primary block" data-act="save-manual">Guardar palabra</button></div>';
     }
@@ -1912,7 +1918,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
       case "save-manual":
         var md = $("#mdef").value.trim();
         if (!md) { toast("Escribe la definición"); break; }
-        S.words.push({ id: uid(), word: ui.q.trim(), pos: "", def: md, bookId: curDictBook(), ts: Date.now() });
+        S.words.push({ id: uid(), word: ui.q.trim(), pos: "", def: md, page: dictPage(), bookId: curDictBook(), ts: Date.now() });
         ui.q = ""; persist(); render(); toast("Palabra guardada"); break;
       case "backup": exportBackup(); break;
       case "restore-pick": var rf = $("#rsf"); if (rf) rf.click(); break;
@@ -1922,6 +1928,14 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         ui.installEvt = null; ie.prompt();
         ie.userChoice.then(function () { render(); }).catch(function () { render(); }); break;
       case "install-hide": try { localStorage.setItem(LSI, "1"); } catch (e2) {} render(); break;
+      case "word-page":
+        var wp = S.words.filter(function (x) { return x.id === el.dataset.id; })[0]; if (!wp) break;
+        openSheet("<h2>Página de “" + esc(wp.word) + "”</h2><div class='stack'><div class='field'><label class='label' for='wpg'>Página donde la encontraste</label><input id='wpg' data-focus type='number' inputmode='numeric' min='1' value='" + (wp.page || "") + "'></div>" +
+          "<button class='btn primary block' data-act='word-page-save' data-id='" + esc(wp.id) + "'>Guardar</button><button class='btn ghost block' data-act='close'>Cancelar</button></div>"); break;
+      case "word-page-save":
+        var ws = S.words.filter(function (x) { return x.id === el.dataset.id; })[0], wn = parseInt($("#wpg").value, 10);
+        if (ws) { ws.page = wn > 0 ? wn : 0; if (ui.result && ui.result.id === ws.id) ui.result.page = ws.page; persist(); }
+        closeSheet(); render(); toast(ws && ws.page ? "Página guardada" : "Página quitada"); break;
       case "del-word": S.words = S.words.filter(function (w) { return w.id !== el.dataset.id; }); if (ui.result && ui.result.id === el.dataset.id) ui.result = null; persist(); render(); break;
     }
   }
@@ -2102,9 +2116,11 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     }
     return next();
   }
+  /* Página escrita junto a la palabra (se conserva para buscar varias palabras de la misma página). */
+  function dictPage() { var n = parseInt(ui.qPage, 10); return n > 0 ? n : 0; }
   function lookup(q) {
     if (!sample && inClaude) return;
-    var bk = curDictBook();
+    var bk = curDictBook(), pg = dictPage();
     ui.loading = true; ui.err = ""; ui.result = null; ui.q = q; render();
     var prompt = 'Eres un diccionario para una persona que lee libros en español. Palabra o expresión: "' + q.replace(/"/g, "'") + '".\n' +
       'Responde solo con un objeto JSON con estas claves: "palabra" (forma de diccionario), "idioma" (idioma de la palabra), "tipo" (sustantivo, verbo, adjetivo, etc.), "definicion" (definición clara y breve, en español), "ejemplo" (una oración corta de ejemplo), "sinonimos" (lista de hasta 4 palabras), "traduccion" (si la palabra no es española, su traducción al español; si lo es, cadena vacía). ' +
@@ -2116,13 +2132,13 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
       } else {
         var low = String(r.palabra).toLowerCase();
         var prev = S.words.filter(function (w) { return w.bookId === bk && w.word.toLowerCase() === low; })[0], id;
-        if (prev) id = prev.id;
+        if (prev) { id = prev.id; if (pg && !prev.page) { prev.page = pg; persist(); } }
         else {
           id = uid();
-          S.words.push({ id: id, word: r.palabra, pos: r.tipo || "", def: r.definicion, tr: r.traduccion || "", ex: r.ejemplo || "", src: r.src || "", bookId: bk, ts: Date.now() });
+          S.words.push({ id: id, word: r.palabra, pos: r.tipo || "", def: r.definicion, tr: r.traduccion || "", ex: r.ejemplo || "", src: r.src || "", page: pg, bookId: bk, ts: Date.now() });
           persist();
         }
-        r.id = id; r.dup = !!prev; r.bookId = bk; ui.result = r; ui.q = "";
+        r.id = id; r.dup = !!prev; r.bookId = bk; r.page = prev ? prev.page : pg; ui.result = r; ui.q = "";
       }
       render();
     }).catch(function (e) {
@@ -2146,6 +2162,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     if (ev.target.id === "dform") {
       ev.preventDefault();
       var q = $("#dq").value.trim();
+      ui.qPage = $("#dp") ? $("#dp").value : "";
       if (!q) return;
       if (sample || !inClaude) lookup(q); else { ui.q = q; ui.result = null; render(); }
     }
@@ -2154,6 +2171,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     if (ev.target.id === "msp") msHint();
     if (ev.target.id === "endp" && S.timer) { var eh = $("#endhint"), dd = (parseInt(ev.target.value, 10) || 0) - S.timer.from; if (eh) eh.textContent = dd > 0 ? "Leíste " + dd + (dd === 1 ? " página" : " páginas") + "." : "Aún no avanzas páginas."; }
     if (ev.target.tagName === "TEXTAREA" && ev.target.id !== "fgt" && ev.target.closest("#sheet")) fit(ev.target);
+    if (ev.target.id === "dp") ui.qPage = ev.target.value;
     if (ev.target.id === "wf") {
       ui.wordFilter = ev.target.value;
       var pos = ev.target.selectionStart; render();
@@ -2162,7 +2180,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   });
   document.addEventListener("change", function (ev) {
     if (ev.target.id === "msb") msHint();
-    if (ev.target.id === "wbook") { ui.dictBook = ev.target.value; ui.result = null; }
+    if (ev.target.id === "wbook") { ui.dictBook = ev.target.value; ui.result = null; ui.qPage = ""; if ($("#dp")) $("#dp").value = ""; }
     if (ev.target.id === "rsf" && ev.target.files && ev.target.files[0]) {
       var rr = new FileReader();
       rr.onerror = function () { toast("No pude leer ese archivo"); };
