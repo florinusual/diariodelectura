@@ -1948,14 +1948,93 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         sib = sib.nextElementSibling;
       }
       lis.forEach(function (li) {
-        var lt = li.textContent.replace(/\s+/g, " ").trim(), m = lt.match(/^Sin[óo]nimos?\s*:\s*(.+)/i), e = lt.match(/^Ejemplos?\s*:\s*(.+)/i);
+        var lt = wikiText(li), m = lt.match(/^Sin[óo]nimos?\s*:\s*(.+)/i), e = lt.match(/^Ejemplos?\s*:\s*(.+)/i);
         if (m && !syn.length) syn = m[1].replace(/\.$/, "").split(/\s*[,;]\s*/).filter(Boolean).slice(0, 4);
-        if (e && !ex) ex = e[1].replace(/^["“«]+|["”»]+$/g, "").slice(0, 220);
+        if (e && !ex) ex = goodEx(e[1]);
       });
       cur.defs.push({ pos: pos, def: d, syn: syn, ex: ex });
     });
     langs = langs.filter(function (l) { return l.defs.length; });
     return langs.filter(function (l) { return /^Español/i.test(l.lang); })[0] || langs[0] || null;
+  }
+  /* Lectura del texto fuente (wikitexto) de la página: definiciones «;1: …», {{ejemplo|…}} y {{sinónimo|…}}. */
+  var WK_LANG = { es: "Español", en: "Inglés", fr: "Francés", pt: "Portugués", it: "Italiano", de: "Alemán", la: "Latín", ca: "Catalán", gl: "Gallego", eu: "Euskera", ja: "Japonés" };
+  function splitTop(s) {
+    var out = [], d = 0, cur = "";
+    for (var i = 0; i < s.length; i++) {
+      var two = s.substr(i, 2);
+      if (two === "{{" || two === "[[") { d++; cur += two; i++; continue; }
+      if ((two === "}}" || two === "]]") && d > 0) { d--; cur += two; i++; continue; }
+      if (s[i] === "|" && d === 0) { out.push(cur); cur = ""; continue; }
+      cur += s[i];
+    }
+    out.push(cur);
+    return out;
+  }
+  function tplArgs(inner) {
+    var parts = splitTop(inner), a = { name: parts[0].trim().toLowerCase(), pos: [], named: {} };
+    parts.slice(1).forEach(function (p) { var m = p.match(/^\s*([\w áéíóúñ-]+?)\s*=([\s\S]*)$/); if (m) a.named[m[1].trim()] = m[2]; else a.pos.push(p); });
+    return a;
+  }
+  function findTpl(line, names) {
+    var m = new RegExp("\\{\\{\\s*(" + names + ")\\s*\\|", "i").exec(line);
+    if (!m) return null;
+    var i = m.index + 2, d = 1, j = i;
+    while (j < line.length && d > 0) { if (line.substr(j, 2) === "{{") { d++; j += 2; } else if (line.substr(j, 2) === "}}") { d--; j += 2; } else j++; }
+    return d === 0 ? tplArgs(line.slice(i, j - 2)) : null;
+  }
+  function cap(t) { t = String(t || "").trim(); return t.charAt(0).toUpperCase() + t.slice(1); }
+  function tplRender(inner) {
+    var a = tplArgs(inner), n = a.name, p = a.pos.map(function (x) { return x.trim(); });
+    if (n === "plm" || n === "ucf") return cap(p[0]);
+    if (n === "l" || n === "l+" || n === "enlace") return p[2] || p[1] || p[0] || "";
+    if (n === "impropia" || n === "nombre propio") return p[0] || "";
+    if (/^forma /.test(n) && p[0]) return "Forma flexiva de " + p[0];
+    return "";
+  }
+  function cleanWiki(t) {
+    t = String(t || "").replace(/<!--[\s\S]*?-->/g, "").replace(/<ref[^>]*\/>/gi, "").replace(/<ref[\s\S]*?<\/ref>/gi, "");
+    for (var k = 0; k < 20 && /\{\{[^{}]*\}\}/.test(t); k++) t = t.replace(/\{\{([^{}]*)\}\}/g, function (_, inner) { return tplRender(inner); });
+    return t.replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, "$1").replace(/'{2,}/g, "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").replace(/^[\s.:;,-]+/, "").trim();
+  }
+  function goodEx(t) {
+    t = String(t || "").replace(/^["“«'\s]+|["”»'\s]+$/g, "").trim();
+    var letters = (t.match(/[a-záéíóúüñ]/gi) || []).length;
+    return t.length > 3 && letters / t.length > 0.6 && !/\d{5,}|[{}<>]|mw-|ISBN/i.test(t) ? t.slice(0, 220) : "";
+  }
+  function wikiSrcParse(src) {
+    var langs = [], cur = null, pos = "", last = null;
+    String(src || "").split("\n").forEach(function (line) {
+      var h = line.match(/^(=+)\s*(.*?)\s*\1\s*$/), old = line.match(/^\{\{([A-Z]{2,3})(\|[^{}]*)?\}\}\s*$/);
+      if (old) h = [line, "==", "{{" + old[1] + "}}"];
+      if (h) {
+        var inner = h[2], tm = inner.match(/^\{\{\s*([^|}]+)(?:\|([^|}]*))?/), name = tm ? tm[1].trim() : inner;
+        if (h[1].length === 2) {
+          var code = tm && /^lengua$/i.test(name) ? (tm[2] || "").trim().toLowerCase() : tm && /^[A-Z]{2,3}$/.test(name) ? name.toLowerCase() : "";
+          cur = { lang: WK_LANG[code] || (code ? code.toUpperCase() : cleanWiki(inner)), defs: [] }; langs.push(cur); pos = ""; last = null; return;
+        }
+        pos = WK_SKIP.test(name) ? null : name.replace(/\s*\d+$/, ""); last = null; return;
+      }
+      if (!cur || pos === null) return;
+      var dm = line.match(/^;\s*\d+(.*)$/);
+      if (dm) {
+        var rest = dm[1], d = 0, at = -1;
+        for (var i = 0; i < rest.length; i++) { var c2 = rest.substr(i, 2); if (c2 === "{{" || c2 === "[[") { d++; i++; } else if ((c2 === "}}" || c2 === "]]") && d) { d--; i++; } else if (rest[i] === ":" && !d) { at = i; break; } }
+        var def = at > -1 ? cleanWiki(rest.slice(at + 1)) : "";
+        last = def ? { pos: pos, def: def, syn: [], ex: "" } : null;
+        if (last) cur.defs.push(last);
+        return;
+      }
+      if (!last) return;
+      var ej = findTpl(line, "ejemplo|ejemplo y trad"), sn = findTpl(line, "sinónimos?|sinonimos?");
+      if (ej && !last.ex) last.ex = goodEx(cleanWiki(ej.pos[0]));
+      if (sn && !last.syn.length) last.syn = sn.pos.map(cleanWiki).filter(Boolean).slice(0, 4);
+      var oe = line.match(/^:+\*?\s*'''Ejemplos?:?'''\s*:?\s*(.+)/i), os = line.match(/^:+\*?\s*'''Sin[óo]nimos?:?'''\s*:?\s*(.+)/i);
+      if (oe && !last.ex) last.ex = goodEx(cleanWiki(oe[1]));
+      if (os && !last.syn.length) last.syn = cleanWiki(os[1]).replace(/\.$/, "").split(/\s*[,;]\s*/).filter(Boolean).slice(0, 4);
+    });
+    langs = langs.filter(function (l) { return l.defs.length; });
+    return langs.filter(function (l) { return l.lang === "Español"; })[0] || langs[0] || null;
   }
   function wikiLookup(q) {
     var tries = [q], low = q.toLowerCase();
@@ -1964,8 +2043,8 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     function next() {
       if (i >= tries.length) return { error: "No encontré “" + q + "” en Wikcionario. Revisa cómo está escrita o escribe tú su significado." };
       var t = tries[i++];
-      return getJson("https://es.wiktionary.org/w/api.php?action=parse&format=json&origin=*&redirects=1&prop=text&disableeditsection=1&page=" + encodeURIComponent(t)).then(function (j) {
-        var l = j && j.parse && j.parse.text && wikiParse(j.parse.text["*"]);
+      return getJson("https://es.wiktionary.org/w/api.php?action=parse&format=json&formatversion=2&origin=*&redirects=1&prop=wikitext%7Ctext&disableeditsection=1&page=" + encodeURIComponent(t)).then(function (j) {
+        var pg = j && j.parse, html = pg && (typeof pg.text === "string" ? pg.text : pg.text && pg.text["*"]), src = pg && (typeof pg.wikitext === "string" ? pg.wikitext : pg.wikitext && pg.wikitext["*"]), l = pg && ((src && wikiSrcParse(src)) || (html && wikiParse(html)));
         if (!l) return next();
         var first = l.defs[0], same = l.defs.filter(function (d) { return d.pos === first.pos; }).slice(0, 3);
         return { palabra: j.parse.title, idioma: l.lang.replace(/\s*\[.*$/, ""), tipo: (first.pos || "").toLowerCase(), definicion: same.length > 1 ? same.map(function (d, k) { return (k + 1) + ". " + d.def; }).join(" ") : first.def, ejemplo: first.ex, sinonimos: first.syn, traduccion: "", src: "Wikcionario", url: "https://es.wiktionary.org/wiki/" + encodeURIComponent(j.parse.title.replace(/ /g, "_")) };
