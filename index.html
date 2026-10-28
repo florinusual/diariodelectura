@@ -2039,8 +2039,8 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   }
   /* Pide la página a Wikcionario; si una forma de consulta falla, prueba la siguiente. */
   function wikiFetch(t) {
-    var api = "https://es.wiktionary.org/w/api.php?action=parse&format=json&origin=*&redirects=1&disableeditsection=1&page=" + encodeURIComponent(t), first = null;
-    function stop(er) { first = first || er; if (er && (er.code === "offline" || er.code === "timeout")) throw er; }
+    var api = "https://es.wiktionary.org/w/api.php?action=parse&format=json&origin=*&redirects=1&disableeditsection=1&page=" + encodeURIComponent(t), first = null, dets = [];
+    function stop(er) { first = first || er; dets.push((er && (er.detail || er.code)) || "?"); if (er && (er.code === "offline" || er.code === "timeout")) throw er; }
     return getJson(api + "&formatversion=2&prop=wikitext%7Ctext").catch(function (er) {
       stop(er);
       return getJson(api + "&prop=text");
@@ -2050,7 +2050,37 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         if (r.status === 404) return {};
         if (!r.ok) throw { code: "net", detail: "HTTP " + r.status };
         return r.text().then(function (h) { return { parse: { title: t, text: h } }; });
-      }).catch(function (er2) { throw first && first.detail ? { code: first.code, detail: first.detail + " / " + ((er2 && (er2.detail || er2.message)) || "") } : er2; });
+      }).catch(function (er2) { dets.push((er2 && (er2.detail || er2.message || er2.code)) || "?"); throw { code: (first && first.code) || "net", detail: "Wikcionario: " + dets.join(" / ") }; });
+    });
+  }
+  /* Segunda fuente: el Diccionario de la lengua española (RAE) a través de rae-api.com, que no depende de Wikimedia. */
+  var RAE_CAT = { adjective: "adjetivo", noun: "sustantivo", verb: "verbo", adverb: "adverbio", pronoun: "pronombre", preposition: "preposición", conjunction: "conjunción", interjection: "interjección", article: "artículo" };
+  function raeLookup(q) {
+    var w = q.trim().toLowerCase();
+    return getJson("https://rae-api.com/api/words/" + encodeURIComponent(w)).then(function (j) {
+      var d = j && (j.data || j), senses = [];
+      ((d && d.meanings) || []).forEach(function (m) { (m.senses || []).forEach(function (x) { if (x && (x.description || x.raw)) senses.push(x); }); });
+      if (!senses.length) return null;
+      var s0 = senses[0], top = senses.slice(0, 3).map(function (x) { return String(x.description || x.raw).replace(/\s+/g, " ").trim(); });
+      var syn = (s0.synonyms || []).map(function (x) { return typeof x === "string" ? x : (x && (x.word || x.text)) || ""; }).filter(Boolean).slice(0, 4);
+      var word = String((d && d.word) || w);
+      return { palabra: word, idioma: "Español", tipo: RAE_CAT[s0.category] || s0.category || "", definicion: top.length > 1 ? top.map(function (t, k) { return (k + 1) + ". " + t; }).join(" ") : top[0], ejemplo: "", sinonimos: syn, traduccion: "", src: "Diccionario de la RAE", url: "https://dle.rae.es/" + encodeURIComponent(word) };
+    }, function (er) {
+      if (er && er.detail === "HTTP 404") return null;
+      throw { code: er && er.code || "net", detail: "RAE: " + ((er && (er.detail || er.code)) || "?") };
+    });
+  }
+  /* Primero Wikcionario; si falla o no tiene la palabra, la RAE. */
+  function dictLookup(q) {
+    return wikiLookup(q).then(function (r) {
+      if (!r.error) return r;
+      return raeLookup(q).then(function (x) { return x || { error: "No encontré “" + q + "” ni en Wikcionario ni en el Diccionario de la RAE. Revisa cómo está escrita o escribe tú su significado." }; }, function () { return r; });
+    }, function (er) {
+      if (er && er.code === "offline") throw er;
+      return raeLookup(q).then(function (x) {
+        if (x) return x;
+        return { error: "No encontré “" + q + "” en el Diccionario de la RAE, y Wikcionario no respondió. Escribe tú su significado." };
+      }, function (er2) { throw { code: "net", detail: [er && er.detail, er2 && er2.detail].filter(Boolean).join(" · ") }; });
     });
   }
   function wikiLookup(q) {
@@ -2079,7 +2109,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     var prompt = 'Eres un diccionario para una persona que lee libros en español. Palabra o expresión: "' + q.replace(/"/g, "'") + '".\n' +
       'Responde solo con un objeto JSON con estas claves: "palabra" (forma de diccionario), "idioma" (idioma de la palabra), "tipo" (sustantivo, verbo, adjetivo, etc.), "definicion" (definición clara y breve, en español), "ejemplo" (una oración corta de ejemplo), "sinonimos" (lista de hasta 4 palabras), "traduccion" (si la palabra no es española, su traducción al español; si lo es, cadena vacía). ' +
       'Si no es una palabra o expresión real, responde {"error":"explicación breve en español"}.';
-    (sample ? sample.json(prompt, { modelTier: "quick" }) : wikiLookup(q)).then(function (r) {
+    (sample ? sample.json(prompt, { modelTier: "quick" }) : dictLookup(q)).then(function (r) {
       ui.loading = false;
       if (!r || r.error || !r.palabra || !r.definicion) {
         ui.err = (r && r.error) || "No encontré esa palabra. Revisa cómo está escrita.";
