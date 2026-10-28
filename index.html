@@ -1354,7 +1354,8 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   }
   function getJson(url) {
     if (navigator.onLine === false) return Promise.reject({ code: "offline" });
-    return fetchT(url).then(function (r) { if (!r.ok) throw { code: "net" }; return r.json(); });
+    return fetchT(url).then(function (r) { if (!r.ok) throw { code: "net", detail: "HTTP " + r.status }; return r.json(); })
+      .catch(function (er) { throw er && er.code ? er : { code: "net", detail: String((er && (er.name + ": " + er.message)) || er) }; });
   }
   function firstFound(tries) {
     var i = 0, answered = false, err = null;
@@ -2036,6 +2037,22 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     langs = langs.filter(function (l) { return l.defs.length; });
     return langs.filter(function (l) { return l.lang === "Español"; })[0] || langs[0] || null;
   }
+  /* Pide la página a Wikcionario; si una forma de consulta falla, prueba la siguiente. */
+  function wikiFetch(t) {
+    var api = "https://es.wiktionary.org/w/api.php?action=parse&format=json&origin=*&redirects=1&disableeditsection=1&page=" + encodeURIComponent(t), first = null;
+    function stop(er) { first = first || er; if (er && (er.code === "offline" || er.code === "timeout")) throw er; }
+    return getJson(api + "&formatversion=2&prop=wikitext%7Ctext").catch(function (er) {
+      stop(er);
+      return getJson(api + "&prop=text");
+    }).catch(function (er) {
+      stop(er);
+      return fetchT("https://es.wiktionary.org/api/rest_v1/page/html/" + encodeURIComponent(t.replace(/ /g, "_"))).then(function (r) {
+        if (r.status === 404) return {};
+        if (!r.ok) throw { code: "net", detail: "HTTP " + r.status };
+        return r.text().then(function (h) { return { parse: { title: t, text: h } }; });
+      }).catch(function (er2) { throw first && first.detail ? { code: first.code, detail: first.detail + " / " + ((er2 && (er2.detail || er2.message)) || "") } : er2; });
+    });
+  }
   function wikiLookup(q) {
     var tries = [q], low = q.toLowerCase();
     if (low !== q) tries.push(low);
@@ -2043,8 +2060,11 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     function next() {
       if (i >= tries.length) return { error: "No encontré “" + q + "” en Wikcionario. Revisa cómo está escrita o escribe tú su significado." };
       var t = tries[i++];
-      return getJson("https://es.wiktionary.org/w/api.php?action=parse&format=json&formatversion=2&origin=*&redirects=1&prop=wikitext%7Ctext&disableeditsection=1&page=" + encodeURIComponent(t)).then(function (j) {
-        var pg = j && j.parse, html = pg && (typeof pg.text === "string" ? pg.text : pg.text && pg.text["*"]), src = pg && (typeof pg.wikitext === "string" ? pg.wikitext : pg.wikitext && pg.wikitext["*"]), l = pg && ((src && wikiSrcParse(src)) || (html && wikiParse(html)));
+      return wikiFetch(t).then(function (j) {
+        var pg = j && j.parse, html = pg && (typeof pg.text === "string" ? pg.text : pg.text && pg.text["*"]), src = pg && (typeof pg.wikitext === "string" ? pg.wikitext : pg.wikitext && pg.wikitext["*"]), l = null;
+        // Si un lector falla con el contenido real de la página, se usa el otro en vez de dar error.
+        try { l = src ? wikiSrcParse(src) : null; } catch (er) { l = null; }
+        if (!l) try { l = html ? wikiParse(html) : null; } catch (er) { l = null; }
         if (!l) return next();
         var first = l.defs[0], same = l.defs.filter(function (d) { return d.pos === first.pos; }).slice(0, 3);
         return { palabra: j.parse.title, idioma: l.lang.replace(/\s*\[.*$/, ""), tipo: (first.pos || "").toLowerCase(), definicion: same.length > 1 ? same.map(function (d, k) { return (k + 1) + ". " + d.def; }).join(" ") : first.def, ejemplo: first.ex, sinonimos: first.syn, traduccion: "", src: "Wikcionario", url: "https://es.wiktionary.org/wiki/" + encodeURIComponent(j.parse.title.replace(/ /g, "_")) };
@@ -2078,7 +2098,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     }).catch(function (e) {
       ui.loading = false;
       var c = e && e.code;
-      ui.err = c === "not_granted" ? "No diste permiso para consultar el diccionario. Puedes guardar palabras con tu propio significado." : c === "rate_limited" ? "Demasiadas búsquedas seguidas. Intenta en un momento." : c === "offline" ? "Sin conexión. Conéctate a internet para buscar, o escribe tú su significado." : c === "timeout" ? "Wikcionario tardó demasiado en responder. Intenta de nuevo, o escribe tú su significado." : "No pude consultar ahora. Intenta de nuevo, o escribe tú su significado.";
+      ui.err = c === "not_granted" ? "No diste permiso para consultar el diccionario. Puedes guardar palabras con tu propio significado." : c === "rate_limited" ? "Demasiadas búsquedas seguidas. Intenta en un momento." : c === "offline" ? "Sin conexión. Conéctate a internet para buscar, o escribe tú su significado." : c === "timeout" ? "Wikcionario tardó demasiado en responder. Intenta de nuevo, o escribe tú su significado." : "No pude consultar ahora. Intenta de nuevo, o escribe tú su significado." + (e && e.detail ? " (Detalle: " + e.detail + ")" : "");
       if (c === "not_granted" || c === "sampling_disabled") sample = null;
       render();
     });
