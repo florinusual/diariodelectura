@@ -1,5 +1,5 @@
 /* Service worker del Diario de Lectura: guarda la app para abrirla sin conexión. */
-var VERSION = "diario-v9";
+var VERSION = "diario-v10";
 var SHELL = ["./", "index.html", "manifest.webmanifest", "icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png", "icons/apple-touch-icon.png"];
 var FONTS = "diario-fonts";
 
