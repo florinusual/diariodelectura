@@ -913,7 +913,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     return '<div class="card"><div class="row spread" style="align-items:flex-start"><div style="min-width:0"><b style="font-size:16.5px;overflow-wrap:anywhere">' + esc(w.word) + '</b> <span class="meta">' + esc(w.pos || "") + '</span></div><button class="x" data-act="del-word" data-id="' + esc(w.id) + '" aria-label="Borrar ' + esc(w.word) + '">✕</button></div>' +
       (w.tr ? '<div class="def"><b>' + esc(w.tr) + "</b></div>" : "") +
       '<div class="def">' + esc(w.def) + "</div>" +
-      (w.ex ? '<div class="meta" style="font-style:italic">“' + esc(w.ex) + "”</div>" : "") + "</div>";
+      (w.ex ? '<div class="meta" style="font-style:italic">“' + esc(w.ex) + "”</div>" : "") + (w.src ? '<div class="meta" style="margin-top:4px">Fuente: ' + esc(w.src) + "</div>" : "") + "</div>";
   }
 
   function vPalabras() {
@@ -926,7 +926,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     h += '<form id="dform" class="row" autocomplete="off"><input id="dq" type="text" inputmode="text" autocapitalize="none" placeholder="Palabra o expresión" value="' + esc(ui.q) + '" aria-label="Palabra"><button class="btn primary" type="submit"' + (ui.loading ? " disabled" : "") + ">Buscar</button></form>";
     if (ui.loading) h += '<p class="meta" style="margin:12px 0">Buscando y guardando…</p>';
     if (ui.err) h += '<p class="meta" style="margin:12px 0;color:var(--warn)">' + esc(ui.err) + "</p>";
-    if (!sample && !ui.loading) h += '<p class="meta" style="margin:12px 0">La búsqueda automática no está disponible aquí. Escribe la palabra y su significado para guardarla.</p>';
+    if (!sample && inClaude && !ui.loading) h += '<p class="meta" style="margin:12px 0">La búsqueda automática no está disponible aquí. Escribe la palabra y su significado para guardarla.</p>';
     if (ui.result) {
       var r = ui.result, rb = bookById(r.bookId);
       h += '<div class="card" style="margin-top:14px"><div class="word">' + esc(r.palabra) + '</div><div class="meta">' + esc([r.tipo, r.idioma && r.idioma.toLowerCase() !== "español" ? r.idioma : ""].filter(Boolean).join(" · ")) + "</div>";
@@ -934,8 +934,9 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
       h += '<p class="def">' + esc(r.definicion) + "</p>";
       if (r.ejemplo) h += '<p class="def meta" style="font-style:italic">“' + esc(r.ejemplo) + "”</p>";
       if (r.sinonimos && r.sinonimos.length) h += '<p class="meta">Sinónimos: ' + esc(r.sinonimos.join(", ")) + "</p>";
+      if (r.src) h += '<p class="meta">Fuente: <a href="' + esc(r.url) + '" target="_blank" rel="noopener" style="color:inherit">' + esc(r.src) + "</a></p>";
       h += '<div class="row spread" style="margin-top:10px"><span class="tag" style="white-space:normal">' + (r.dup ? "Ya estaba en " : "Guardada en ") + esc(rb ? rb.title : "tu lista") + '</span><button class="btn ghost" style="min-height:40px" data-act="del-word" data-id="' + esc(r.id) + '">Quitar</button></div></div>';
-    } else if (!sample && ui.q.trim()) {
+    } else if (!sample && !ui.loading && ui.q.trim()) {
       h += '<div class="card stack" style="margin-top:14px"><div class="field"><label class="label" for="mdef">Significado de “' + esc(ui.q.trim()) + '”</label><textarea id="mdef" placeholder="Escribe qué significa"></textarea></div><button class="btn primary block" data-act="save-manual">Guardar palabra</button></div>';
     }
     h += '<h2 style="margin-top:26px">Mi lista · ' + S.words.length + "</h2>";
@@ -1924,14 +1925,62 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     }
   }
 
+  /* Fuera de Claude, el significado se busca en Wikcionario en español (es.wiktionary.org). */
+  var WK_SKIP = /^(Etimolog|Pronunciaci|Traducci|Véase|Informaci|Referencias|Notas|Locuciones|Refranes|Conjugaci|Descendientes|Compuestos|Derivad|Parónimos|Anagramas|Relacionad|Formas? alternativ)/i;
+  function wikiText(el) {
+    var c = el.cloneNode(true);
+    Array.prototype.forEach.call(c.querySelectorAll("sup, ul, ol, dl, style, script, .reference, .mw-ref"), function (x) { x.remove(); });
+    return c.textContent.replace(/\s+/g, " ").replace(/^[\s.:;,-]+/, "").trim();
+  }
+  function wikiParse(html) {
+    var doc = new DOMParser().parseFromString(html, "text/html"), langs = [], cur = null, pos = "";
+    Array.prototype.forEach.call(doc.querySelectorAll("h2, h3, h4, h5, dt"), function (el) {
+      var t = el.textContent.replace(/\[editar\]/g, "").replace(/\s+/g, " ").trim();
+      if (el.tagName === "H2") { cur = { lang: t, defs: [] }; langs.push(cur); pos = ""; return; }
+      if (el.tagName !== "DT") { pos = WK_SKIP.test(t) ? null : t.replace(/\s*\d+$/, ""); return; }
+      if (!cur || pos === null || !/^\d/.test(t)) return;
+      var dd = el.nextElementSibling, d = dd && dd.tagName === "DD" ? wikiText(dd) : "";
+      if (!d) return;
+      // Sinónimos y ejemplos: dentro de la definición o en las listas que la siguen, hasta la próxima acepción o sección.
+      var syn = [], ex = "", lis = Array.prototype.slice.call(dd.querySelectorAll("li")), sib = el.parentNode && el.parentNode.nextElementSibling;
+      while (sib && !sib.querySelector("dt") && !/^H\d$/.test(sib.tagName) && !(sib.classList && sib.classList.contains("mw-heading"))) {
+        lis = lis.concat(Array.prototype.slice.call(sib.tagName === "LI" ? [sib] : sib.querySelectorAll("li")));
+        sib = sib.nextElementSibling;
+      }
+      lis.forEach(function (li) {
+        var lt = li.textContent.replace(/\s+/g, " ").trim(), m = lt.match(/^Sin[óo]nimos?\s*:\s*(.+)/i), e = lt.match(/^Ejemplos?\s*:\s*(.+)/i);
+        if (m && !syn.length) syn = m[1].replace(/\.$/, "").split(/\s*[,;]\s*/).filter(Boolean).slice(0, 4);
+        if (e && !ex) ex = e[1].replace(/^["“«]+|["”»]+$/g, "").slice(0, 220);
+      });
+      cur.defs.push({ pos: pos, def: d, syn: syn, ex: ex });
+    });
+    langs = langs.filter(function (l) { return l.defs.length; });
+    return langs.filter(function (l) { return /^Español/i.test(l.lang); })[0] || langs[0] || null;
+  }
+  function wikiLookup(q) {
+    var tries = [q], low = q.toLowerCase();
+    if (low !== q) tries.push(low);
+    var i = 0;
+    function next() {
+      if (i >= tries.length) return { error: "No encontré “" + q + "” en Wikcionario. Revisa cómo está escrita o escribe tú su significado." };
+      var t = tries[i++];
+      return getJson("https://es.wiktionary.org/w/api.php?action=parse&format=json&origin=*&redirects=1&prop=text&disableeditsection=1&page=" + encodeURIComponent(t)).then(function (j) {
+        var l = j && j.parse && j.parse.text && wikiParse(j.parse.text["*"]);
+        if (!l) return next();
+        var first = l.defs[0], same = l.defs.filter(function (d) { return d.pos === first.pos; }).slice(0, 3);
+        return { palabra: j.parse.title, idioma: l.lang.replace(/\s*\[.*$/, ""), tipo: (first.pos || "").toLowerCase(), definicion: same.length > 1 ? same.map(function (d, k) { return (k + 1) + ". " + d.def; }).join(" ") : first.def, ejemplo: first.ex, sinonimos: first.syn, traduccion: "", src: "Wikcionario", url: "https://es.wiktionary.org/wiki/" + encodeURIComponent(j.parse.title.replace(/ /g, "_")) };
+      });
+    }
+    return next();
+  }
   function lookup(q) {
-    if (!sample) return;
+    if (!sample && inClaude) return;
     var bk = curDictBook();
     ui.loading = true; ui.err = ""; ui.result = null; ui.q = q; render();
     var prompt = 'Eres un diccionario para una persona que lee libros en español. Palabra o expresión: "' + q.replace(/"/g, "'") + '".\n' +
       'Responde solo con un objeto JSON con estas claves: "palabra" (forma de diccionario), "idioma" (idioma de la palabra), "tipo" (sustantivo, verbo, adjetivo, etc.), "definicion" (definición clara y breve, en español), "ejemplo" (una oración corta de ejemplo), "sinonimos" (lista de hasta 4 palabras), "traduccion" (si la palabra no es española, su traducción al español; si lo es, cadena vacía). ' +
       'Si no es una palabra o expresión real, responde {"error":"explicación breve en español"}.';
-    sample.json(prompt, { modelTier: "quick" }).then(function (r) {
+    (sample ? sample.json(prompt, { modelTier: "quick" }) : wikiLookup(q)).then(function (r) {
       ui.loading = false;
       if (!r || r.error || !r.palabra || !r.definicion) {
         ui.err = (r && r.error) || "No encontré esa palabra. Revisa cómo está escrita.";
@@ -1941,7 +1990,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         if (prev) id = prev.id;
         else {
           id = uid();
-          S.words.push({ id: id, word: r.palabra, pos: r.tipo || "", def: r.definicion, tr: r.traduccion || "", ex: r.ejemplo || "", bookId: bk, ts: Date.now() });
+          S.words.push({ id: id, word: r.palabra, pos: r.tipo || "", def: r.definicion, tr: r.traduccion || "", ex: r.ejemplo || "", src: r.src || "", bookId: bk, ts: Date.now() });
           persist();
         }
         r.id = id; r.dup = !!prev; r.bookId = bk; ui.result = r; ui.q = "";
@@ -1950,7 +1999,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     }).catch(function (e) {
       ui.loading = false;
       var c = e && e.code;
-      ui.err = c === "not_granted" ? "No diste permiso para consultar el diccionario. Puedes guardar palabras con tu propio significado." : c === "rate_limited" ? "Demasiadas búsquedas seguidas. Intenta en un momento." : "No pude consultar ahora. Intenta de nuevo.";
+      ui.err = c === "not_granted" ? "No diste permiso para consultar el diccionario. Puedes guardar palabras con tu propio significado." : c === "rate_limited" ? "Demasiadas búsquedas seguidas. Intenta en un momento." : c === "offline" ? "Sin conexión. Conéctate a internet para buscar, o escribe tú su significado." : c === "timeout" ? "Wikcionario tardó demasiado en responder. Intenta de nuevo, o escribe tú su significado." : "No pude consultar ahora. Intenta de nuevo, o escribe tú su significado.";
       if (c === "not_granted" || c === "sampling_disabled") sample = null;
       render();
     });
@@ -1969,7 +2018,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
       ev.preventDefault();
       var q = $("#dq").value.trim();
       if (!q) return;
-      if (sample) lookup(q); else { ui.q = q; ui.result = null; render(); }
+      if (sample || !inClaude) lookup(q); else { ui.q = q; ui.result = null; render(); }
     }
   });
   document.addEventListener("input", function (ev) {
