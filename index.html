@@ -511,6 +511,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   }
   function render() {
     syncFinished();
+    chBackfill();
     var tabs = document.querySelectorAll("#tabs button");
     for (var i = 0; i < tabs.length; i++) {
       if (tabs[i].dataset.tab === ui.tab) tabs[i].setAttribute("aria-current", "page"); else tabs[i].removeAttribute("aria-current");
@@ -1385,6 +1386,24 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
       if ($("#bt") && !ui.busy) reopen();
     }).catch(function () {});
   }
+  /* Recalcula los capítulos de las sesiones de un libro conservando las estrellas; con soloFaltantes, solo las que aún no los tienen. */
+  function chSync(b, soloFaltantes) {
+    if (!b) return false;
+    var ch = false;
+    S.sessions.forEach(function (x) {
+      if (x.bookId !== b.id || (soloFaltantes && x.chapters)) return;
+      var old = {};
+      (x.chapters || []).forEach(function (c) { old[c.id] = c.liked; });
+      var list = chRead(b, x.from, x.to).map(function (c) { return { id: c.id, n: c.n, part: c.part, liked: !!old[c.id] }; });
+      if (JSON.stringify(list) !== JSON.stringify(x.chapters || null)) { x.chapters = list; ch = true; }
+    });
+    return ch;
+  }
+  function chBackfill() {
+    var ch = false;
+    S.books.forEach(function (b) { if (chRanges(b).length && chSync(b, true)) ch = true; });
+    if (ch) persist();
+  }
   function sessChaps(x) {
     if (!x.chapters || !x.chapters.length) return "";
     var h = '<div class="schs">';
@@ -1700,6 +1719,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         var i = S.books.map(function (x) { return x.id; }).indexOf(rec.id);
         if (i > -1) S.books[i] = rec; else S.books.push(rec);
         if (e.fromWish) S.wish = S.wish.filter(function (x) { return x.id !== e.fromWish; });
+        chSync(rec);
         bumpSaga(rec); persist(); afterSave(); toast(e.fromWish ? "Pasó de deseos a tus libros" : "Libro guardado"); break;
       case "del-book":
         if (!ui.confirm) { readEdit(); ui.confirm = true; bookSheet(); break; }
@@ -1976,8 +1996,11 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
           '<div class="field"><label class="label" for="esb">Libro</label><select id="esb">' + bopts + "</select></div>" +
           '<div class="field"><label class="label" for="esd">Fecha</label><input id="esd" type="date" value="' + dayKey(se.start) + '" max="' + tdE + '"></div>' +
           '<div class="field"><span class="label">Tiempo leído</span><div class="grid2"><input id="esh" type="number" inputmode="numeric" min="0" placeholder="Horas" aria-label="Horas" value="' + Math.floor(mins / 60) + '"><input id="esm" type="number" inputmode="numeric" min="0" max="59" placeholder="Minutos" aria-label="Minutos" value="' + (mins % 60) + '"></div></div>' +
-          '<div class="field"><span class="label">Páginas</span><div class="grid2"><input id="esf" type="number" inputmode="numeric" min="0" aria-label="Página inicial" placeholder="Desde" value="' + se.from + '"><input id="est" type="number" inputmode="numeric" min="0" aria-label="Página final" placeholder="Hasta" value="' + se.to + '"></div></div>' +
-          '<button class="btn primary block" data-act="sess-save" data-id="' + esc(se.id) + '">Guardar cambios</button><button class="btn ghost block" data-act="sess-back">Cancelar</button></div>'); break;
+          '<div class="field"><span class="label">Páginas</span><div class="grid2"><input id="esf" type="number" inputmode="numeric" min="0" aria-label="Página inicial" placeholder="Desde" value="' + se.from + '"><input id="est" type="number" inputmode="numeric" min="0" aria-label="Página final" placeholder="Hasta" value="' + se.to + '"></div></div><div id="chlist"></div>' +
+          '<button class="btn primary block" data-act="sess-save" data-id="' + esc(se.id) + '">Guardar cambios</button><button class="btn ghost block" data-act="sess-back">Cancelar</button></div>');
+        ui.chLikes = {}; (se.chapters || []).forEach(function (c) { if (c.liked) ui.chLikes[c.id] = true; });
+        ui.chCtx = { bookId: function () { return $("#esb") ? $("#esb").value : se.bookId; }, from: function () { return parseInt(($("#esf") || {}).value, 10) || 0; }, input: "est" };
+        chRefresh(); break;
       case "sess-save":
         var sv = S.sessions.filter(function (x) { return x.id === el.dataset.id; })[0]; if (!sv) break;
         var ed = $("#esd").value, tdS = dayKey(Date.now());
@@ -1989,6 +2012,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         if (tgt && tgt.pages && et > tgt.pages) et = tgt.pages;
         if (ed !== dayKey(sv.start)) sv.start = ed === tdS ? Date.now() : new Date(ed + "T12:00:00").getTime();
         sv.sec = (eh * 60 + em) * 60; sv.from = ef; sv.to = et;
+        var svc = chSaved(tgt, ef, et); sv.chapters = svc;
         if (moved) {
           if (sb && rnOf(sv) === rnOf(sb)) {
             sb.page = Math.max(0, (sb.page || 0) - Math.max(0, oldTo - oldFrom));
@@ -2311,6 +2335,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   });
   document.addEventListener("input", function (ev) {
     if (ev.target.id === "msp") { msHint(); chRefresh(); }
+    if (ev.target.id === "esf" || ev.target.id === "est") chRefresh();
     if (ev.target.id === "endp") chRefresh();
     if (ev.target.id === "endp" && S.timer) { var eh = $("#endhint"), dd = (parseInt(ev.target.value, 10) || 0) - S.timer.from; if (eh) eh.textContent = dd > 0 ? "Leíste " + dd + (dd === 1 ? " página" : " páginas") + "." : "Aún no avanzas páginas."; }
     if (ev.target.tagName === "TEXTAREA" && ev.target.id !== "fgt" && ev.target.closest("#sheet")) fit(ev.target);
@@ -2322,7 +2347,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     }
   });
   document.addEventListener("change", function (ev) {
-    if (ev.target.id === "msb" || ev.target.id === "mse") { msHint(); chRefresh(); }
+    if (ev.target.id === "msb" || ev.target.id === "mse" || ev.target.id === "esb") { msHint(); chRefresh(); }
     if (ev.target.id === "wbook") { ui.dictBook = ev.target.value; ui.result = null; ui.qPage = ""; if ($("#dp")) $("#dp").value = ""; }
     if (ev.target.id === "rsf" && ev.target.files && ev.target.files[0]) {
       var rr = new FileReader();
