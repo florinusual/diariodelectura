@@ -321,6 +321,20 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
 .slot .num { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 11.5px; display: grid; place-items: center; }
 .slotb { text-align: left; width: 100%; min-height: 40px; }
 .btn.sm { min-height: 38px; padding: 0 10px; font-size: 11.5px; flex: none; }
+/* capítulos */
+.chedit { display: flex; gap: 6px; align-items: center; }
+.chedit input[type="text"] { flex: 1; min-width: 0; }
+.chedit input[type="number"] { flex: none; width: 76px; }
+.chpick { display: flex; flex-direction: column; }
+.chrow, .sch { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.chrow { padding: 2px 0 2px 2px; border-bottom: 1px solid var(--line); }
+.chrow > span, .sch > span { min-width: 0; overflow-wrap: anywhere; }
+.chstar { flex: none; font-size: 23px; line-height: 1; color: var(--muted); min-width: 44px; min-height: 44px; }
+.chstar.on { color: var(--star); }
+.chstar.sm { font-size: 18px; min-width: 38px; min-height: 34px; }
+.schs { margin: 2px 0 4px 22px; font-size: 12.5px; }
+.sitem > div:first-child { flex: 1; min-width: 0; }
+.sitem:has(.schs) { align-items: flex-start; }
 /* diccionario: palabra + página */
 .dform { display: flex; gap: 8px; }
 .dform #dq { flex: 1; min-width: 0; }
@@ -1207,7 +1221,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         lastDay = dk; dn++;
         h += '<div class="sday"><b>Día ' + dn + '</b><i></i><span>' + new Date(x.start).toLocaleDateString("es", { day: "numeric", month: "short", year: "numeric" }) + "</span></div>";
       }
-      h += '<div class="sitem"><div><div class="sdur">' + ICON_BOOKMARK + (x.sec > 0 ? "Durante " + dur(x.sec).trim() : "Sin tiempo registrado") + '</div><div class="spg">Pag. ' + x.to + (x.to > x.from ? ' <b>+' + (x.to - x.from) + "</b>" : "") + '</div></div>' +
+      h += '<div class="sitem"><div><div class="sdur">' + ICON_BOOKMARK + (x.sec > 0 ? "Durante " + dur(x.sec).trim() : "Sin tiempo registrado") + '</div><div class="spg">Pag. ' + x.to + (x.to > x.from ? ' <b>+' + (x.to - x.from) + "</b>" : "") + "</div>" + sessChaps(x) + "</div>" +
         '<button type="button" class="x" style="min-width:40px;min-height:40px;font-size:18.5px;font-weight:700;letter-spacing:1px" data-act="sess-menu" data-id="' + esc(x.id) + '" aria-label="Opciones de la sesión">⋯</button></div>';
     });
     return h + "</div></div>";
@@ -1235,6 +1249,9 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     h += '<div class="stack" style="margin-top:16px">';
     h += row("Progreso", '<div class="bar" style="margin:4px 0 4px"><i style="width:' + pct(b) + '%"></i></div><span class="meta">' + (b.pages ? "p. " + b.page + " de " + b.pages + " · " + pct(b) + "%" : "p. " + b.page) + "</span>");
     h += row("Saga", esc(sagaTag(b)));
+    var chLiked = {};
+    S.sessions.forEach(function (x) { if (x.bookId === b.id) (x.chapters || []).forEach(function (c) { if (c.liked) chLiked[c.id] = 1; }); });
+    if ((b.chapters || []).length) h += row("Capítulos", b.chapters.length + (Object.keys(chLiked).length ? " · te gustaron " + Object.keys(chLiked).length + ' <span style="color:var(--star)">★</span>' : ""));
     h += row("Idioma", esc(b.lang)) + row("Publicación", esc(b.pub)) + row("Editorial", esc(b.editorial)) + row("Género", esc(b.genre)) + row("ISBN", isbnLabel(b.isbn)) + row("Año en el estante", String(yearOf(b)));
     h += row("Resumen", '<span style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(b.summary) + "</span>");
     if (b.status === "terminado" && b.notes) h += row("Notas y reseña", '<span style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(b.notes) + "</span>");
@@ -1249,6 +1266,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     h += idBlock(e, true);
     h += '<div class="grid2"><div class="field"><label class="label" for="bp">Páginas</label><input id="bp" type="number" inputmode="numeric" min="0" value="' + (e.pages || "") + '"></div>' +
       '<div class="field"><label class="label" for="bc">Página actual</label><input id="bc" type="number" inputmode="numeric" min="0" value="' + (e.page || 0) + '"></div></div>';
+    h += chaptersField(e);
     h += infoMeta(e);
     h += sagaFields(e);
     h += '<div class="field"><label class="label" for="byr">Año en el estante</label><input id="byr" type="number" inputmode="numeric" min="1900" max="2100" placeholder="' + new Date().getFullYear() + '" value="' + (e.year || "") + '"><p class="msg">Si lo dejas vacío, se usa el año en que lo terminaste o lo agregaste.</p></div>';
@@ -1287,17 +1305,105 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     if ($("#bgn")) e.genre = $("#bgn").value.trim();
     if ($("#brs")) e.summary = $("#brs").value;
     if ($("#bn")) e.notes = $("#bn").value;
+    chReadForm(e);
+  }
+
+  /* ---------- capítulos ---------- */
+  // Cada capítulo: { id, n: nombre, p: página donde empieza }. Al terminar una sesión se listan los que se leyeron.
+  function chRanges(b) {
+    var cs = ((b && b.chapters) || []).filter(function (c) { return c.p > 0; }).slice().sort(function (a, c) { return a.p - c.p; });
+    return cs.map(function (c, i) { return { c: c, s: c.p, e: i + 1 < cs.length ? cs[i + 1].p - 1 : (b.pages || Infinity) }; });
+  }
+  function chRead(b, from, to) {
+    if (!(to > from)) return [];
+    return chRanges(b).filter(function (r) { return r.s <= to && r.e > from; }).map(function (r) { return { id: r.c.id, n: r.c.n, part: !(r.s > from && r.e <= to) }; });
+  }
+  function chPickHtml(b, from, to) {
+    if (!b || !chRanges(b).length) return "";
+    var list = chRead(b, from, to), likes = ui.chLikes || {};
+    if (!list.length) return '<p class="msg">Al escribir la página donde te quedaste verás aquí los capítulos que leíste.</p>';
+    var h = '<div class="field"><span class="label">Capítulos que leíste · toca la estrella si te gustó</span><div class="chpick">';
+    list.forEach(function (c) {
+      var on = !!likes[c.id];
+      h += '<div class="chrow"><span>' + esc(c.n) + (c.part ? ' <span class="meta">(una parte)</span>' : "") + '</span><button type="button" class="chstar' + (on ? " on" : "") + '" data-act="ch-like" data-id="' + esc(c.id) + '" aria-pressed="' + on + '" aria-label="Me gustó ' + esc(c.n) + '">' + (on ? "★" : "☆") + "</button></div>";
+    });
+    return h + "</div></div>";
+  }
+  function chRefresh() {
+    var box = $("#chlist"), x = ui.chCtx; if (!box || !x) return;
+    var inp = $("#" + x.input), to = inp ? parseInt(inp.value, 10) || 0 : 0;
+    if (!to && x.fallbackTo) to = x.fallbackTo();
+    box.innerHTML = chPickHtml(bookById(x.bookId()), x.from(), to);
+  }
+  function chSaved(b, from, to) {
+    var likes = ui.chLikes || {};
+    return chRead(b, from, to).map(function (c) { return { id: c.id, n: c.n, part: c.part, liked: !!likes[c.id] }; });
+  }
+  function chaptersField(e) {
+    var cs = e.chapters || [], h = '<div class="field"><span class="label">Capítulos' + (cs.length ? " · " + cs.length : "") + "</span>";
+    if (!cs.length) h += '<p class="msg">Anota cada capítulo con la página donde empieza. Al terminar una sesión verás qué capítulos leíste y podrás marcar con una estrella los que te gustaron.</p>';
+    else {
+      h += '<div class="stack" style="gap:6px">';
+      cs.forEach(function (c, i) {
+        h += '<div class="chedit"><input id="chn' + i + '" type="text" placeholder="Capítulo ' + (i + 1) + '" value="' + esc(c.n) + '" aria-label="Nombre del capítulo ' + (i + 1) + '"><input id="chp' + i + '" type="number" inputmode="numeric" min="1" placeholder="Pág." value="' + (c.p || "") + '" aria-label="Página donde empieza el capítulo ' + (i + 1) + '"><button type="button" class="x" data-act="ch-del" data-i="' + i + '" aria-label="Quitar capítulo ' + (i + 1) + '">✕</button></div>';
+      });
+      h += "</div>";
+    }
+    return h + '<div class="row" style="flex-wrap:wrap;gap:6px;margin-top:4px"><button type="button" class="btn sm" data-act="ch-add">+ Capítulo</button><button type="button" class="btn sm ghost" data-act="ch-many">Agregar varios</button></div></div>';
+  }
+  function chReadForm(e) {
+    if (!e.chapters || !$("#bt")) return;
+    e.chapters = e.chapters.map(function (c, i) { var n = $("#chn" + i), p = $("#chp" + i); return { id: c.id, n: n ? n.value.trim() : c.n, p: p ? (parseInt(p.value, 10) || 0) : c.p }; });
+  }
+  function chClean(list) {
+    var cs = (list || []).filter(function (c) { return (c.n || "").trim() || c.p > 0; }).map(function (c, i) { return { id: c.id || uid(), n: (c.n || "").trim() || "Capítulo " + (i + 1), p: c.p > 0 ? c.p : 0 }; });
+    return cs.filter(function (c) { return c.p; }).sort(function (a, c) { return a.p - c.p; }).concat(cs.filter(function (c) { return !c.p; }));
+  }
+  function chParse(txt) {
+    return String(txt || "").split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean).map(function (l) {
+      if (/^cap[ií]tulo\s+[\divxlc]+$/i.test(l)) return { id: uid(), n: l, p: 0 };
+      var m = l.match(/^(.*?)[\s.·…_\-–—]*?(\d{1,4})$/);
+      return m && m[1].trim() ? { id: uid(), n: m[1].replace(/[\s.·…_\-–—]+$/, "").trim(), p: +m[2] } : { id: uid(), n: l, p: 0 };
+    });
+  }
+  function chFromToc(toc) { return toc.map(function (x) { return { id: uid(), n: x.n, p: x.p }; }); }
+  function chManySheet() {
+    openSheet("<h2>Agregar capítulos</h2><div class='stack'>" +
+      '<div class="field"><label class="label" for="chcount">¿Cuántos capítulos tiene?</label><input id="chcount" type="number" inputmode="numeric" min="1" max="300" placeholder="Ej. 12"></div>' +
+      '<button type="button" class="btn block" data-act="ch-gen">Crear “Capítulo 1, 2, 3…”</button>' +
+      '<div class="field"><label class="label" for="chtxt">O pega el índice del libro</label><textarea id="chtxt" style="min-height:150px" placeholder="Un capítulo por renglón, con su página al final:&#10;La llegada 11&#10;El viaje ........ 34"></textarea><p class="msg">Si un renglón termina en número, se toma como la página donde empieza el capítulo.</p></div>' +
+      '<button type="button" class="btn primary block" data-act="ch-use">Usar este índice</button><button type="button" class="btn ghost block" data-act="ch-back">Cancelar</button></div>');
+  }
+  function chShow(i) { bookSheet(); var f = $("#chn" + i); if (f) { f.scrollIntoView({ block: "center" }); } }
+  /* Si la edición tiene índice en Open Library, se cargan sus capítulos. */
+  function tocFill(ed, isbn) {
+    if (ed.kind === "wish" || (ed.chapters || []).length || !isbn) return;
+    olBooks(isbn).then(function (r) {
+      if (!r || !r.toc || !r.toc.length || ui.edit !== ed || (ed.chapters || []).length) return;
+      readEdit(); ed.chapters = chFromToc(r.toc);
+      ui.msg += " También cargué " + r.toc.length + " capítulos del índice de Open Library; revisa sus páginas.";
+      if ($("#bt") && !ui.busy) reopen();
+    }).catch(function () {});
+  }
+  function sessChaps(x) {
+    if (!x.chapters || !x.chapters.length) return "";
+    var h = '<div class="schs">';
+    x.chapters.forEach(function (c) {
+      h += '<div class="sch"><span>' + esc(c.n) + (c.part ? ' <span class="meta">(una parte)</span>' : "") + '</span><button type="button" class="chstar sm' + (c.liked ? " on" : "") + '" data-act="sess-ch-like" data-s="' + esc(x.id) + '" data-c="' + esc(c.id) + '" aria-pressed="' + !!c.liked + '" aria-label="Me gustó ' + esc(c.n) + '">' + (c.liked ? "★" : "☆") + "</button></div>";
+    });
+    return h + "</div>";
   }
 
   function finishSheet() {
     var t = S.timer, b = bookById(t.bookId), ms = elapsed();
     var h = "<h2>¿Hasta qué página llegaste?</h2>";
     h += '<p class="meta" style="margin:0 0 12px">' + esc(b ? b.title : "Libro") + " · " + clock(ms) + " de lectura. Empezaste en la página " + t.from + ".</p>";
-    h += '<div class="stack"><div class="field"><label class="label" for="endp">Página final</label><input id="endp" data-focus type="number" inputmode="numeric" min="0" value="' + t.from + '"></div><p class="msg" id="endhint">Aún no avanzas páginas.</p>';
+    h += '<div class="stack"><div class="field"><label class="label" for="endp">Página final</label><input id="endp" data-focus type="number" inputmode="numeric" min="0" value="' + t.from + '"></div><p class="msg" id="endhint">Aún no avanzas páginas.</p><div id="chlist"></div>';
+    ui.chLikes = {}; ui.chCtx = { bookId: function () { return t.bookId; }, from: function () { return t.from; }, input: "endp" };
     h += '<button class="btn primary block" data-act="save-session">Guardar sesión</button>';
     h += '<button class="btn ghost block" data-act="close">Seguir leyendo</button>';
     h += '<button class="btn danger block" data-act="discard">Descartar sesión</button></div>';
-    openSheet(h);
+    openSheet(h); chRefresh();
     var inp = $("#endp"); if (inp) inp.select();
   }
 
@@ -1377,7 +1483,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     return getJson("https://openlibrary.org/api/books?bibkeys=ISBN:" + code + "&format=json&jscmd=data").then(function (j) {
       var d = j && j["ISBN:" + code];
       if (!d || !d.title) return { encontrado: false };
-      return { encontrado: true, src: "Open Library", titulo: d.title + (d.subtitle ? ": " + d.subtitle : ""), autor: (d.authors || []).map(function (a) { return a.name; }).join(", "), paginas: d.number_of_pages || null, publicacion: d.publish_date || "", editorial: ((d.publishers || [])[0] || {}).name || "", coverL: httpsUrl((d.cover || {}).medium) };
+      return { encontrado: true, src: "Open Library", titulo: d.title + (d.subtitle ? ": " + d.subtitle : ""), autor: (d.authors || []).map(function (a) { return a.name; }).join(", "), paginas: d.number_of_pages || null, publicacion: d.publish_date || "", editorial: ((d.publishers || [])[0] || {}).name || "", coverL: httpsUrl((d.cover || {}).medium), toc: (d.table_of_contents || []).filter(function (x) { return x && x.title; }).map(function (x) { return { n: String(x.title).trim(), p: parseInt(x.pagenum, 10) || 0 }; }) };
     });
   }
   function olSearch(params) {
@@ -1514,7 +1620,8 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     if (c.isbn) e.isbn = normIsbn(c.isbn);
     if (c.idioma) e.lang = c.idioma; if (c.publicacion) e.pub = String(c.publicacion); if (c.editorial) e.editorial = c.editorial;
     if (c.genero && !e.genre) e.genre = c.genero; if (c.resumen && !e.summary) e.summary = c.resumen;
-    return "Datos llenados desde " + c.src + "." + (c.isbn ? "" : " Esta fuente no trae ISBN: búscalo en la contraportada.") + " Revísalos antes de guardar.";
+    var toc = c.toc && c.toc.length && !(e.chapters || []).length ? (e.chapters = chFromToc(c.toc)).length : 0;
+    return "Datos llenados desde " + c.src + "." + (c.isbn ? "" : " Esta fuente no trae ISBN: búscalo en la contraportada.") + (toc ? " También cargué " + toc + " capítulos de su índice." : "") + " Revísalos antes de guardar.";
   }
 
   function inkFor(hex) {
@@ -1549,9 +1656,11 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     h += '<div class="field"><label class="label" for="mse">Fecha de término (opcional)</label><input id="mse" type="date" max="' + td + '"><p class="msg" style="margin-top:6px">Si la llenas, el libro se marca como terminado en esa fecha. Útil para libros que leíste antes.</p></div>';
     h += '<div class="field"><span class="label">Tiempo leído (opcional)</span><div class="grid2"><input id="msh" type="number" inputmode="numeric" min="0" placeholder="Horas" aria-label="Horas"><input id="msm" type="number" inputmode="numeric" min="0" max="59" placeholder="Minutos" aria-label="Minutos"></div></div>';
     h += '<div class="field"><label class="label" for="msp">Página a la que llegué (opcional)</label><input id="msp" type="number" inputmode="numeric" min="1" placeholder="Ej. 59"></div>';
-    h += '<p class="msg" id="mshint"></p>';
+    h += '<p class="msg" id="mshint"></p><div id="chlist"></div>';
     h += '<button class="btn primary block" data-act="save-msession">Guardar sesión</button><button class="btn ghost block" data-act="close">Cancelar</button></div>';
-    openSheet(h); msHint();
+    ui.chLikes = {};
+    ui.chCtx = { bookId: function () { return $("#msb") ? $("#msb").value : ""; }, from: function () { return (bookById($("#msb") ? $("#msb").value : "") || {}).page || 0; }, input: "msp", fallbackTo: function () { return $("#mse") && $("#mse").value ? (bookById($("#msb").value) || {}).pages || 0 : 0; } };
+    openSheet(h); msHint(); chRefresh();
   }
   function msHint() {
     var hb = $("#msb"), hp = $("#msp"), ht = $("#mshint"); if (!hb || !hp || !ht) return;
@@ -1584,7 +1693,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         if (e.pages && e.page >= e.pages) e.status = "terminado";
         var newId = e.id || uid();
         var hasCover = e.removeCover ? false : (e.coverData ? true : !!e.cover);
-        var rec = { id: newId, isbn: normIsbn(e.isbn), cover: hasCover, spine: e.spine || "", ccolor: e.ccolor || "", sagaId: e.sagaId || "", vol: e.vol || 0, year: e.year || 0, lang: e.lang || "", pub: e.pub || "", editorial: e.editorial || "", genre: e.genre || "", summary: e.summary || "", frags: (bookById(newId) || {}).frags || [], reads: (bookById(newId) || {}).reads || [], rn: (bookById(newId) || {}).rn || 1, title: e.title.trim(), author: e.author.trim(), pages: e.pages, page: e.page, status: e.status, rating: e.rating, dropped: e.status === "terminado" ? !!e.dropped : false, color: e.color, notes: e.notes, added: e.added || Date.now(), finished: e.status === "terminado" ? (e.finished || Date.now()) : null };
+        var rec = { id: newId, chapters: chClean(e.chapters), isbn: normIsbn(e.isbn), cover: hasCover, spine: e.spine || "", ccolor: e.ccolor || "", sagaId: e.sagaId || "", vol: e.vol || 0, year: e.year || 0, lang: e.lang || "", pub: e.pub || "", editorial: e.editorial || "", genre: e.genre || "", summary: e.summary || "", frags: (bookById(newId) || {}).frags || [], reads: (bookById(newId) || {}).reads || [], rn: (bookById(newId) || {}).rn || 1, title: e.title.trim(), author: e.author.trim(), pages: e.pages, page: e.page, status: e.status, rating: e.rating, dropped: e.status === "terminado" ? !!e.dropped : false, color: e.color, notes: e.notes, added: e.added || Date.now(), finished: e.status === "terminado" ? (e.finished || Date.now()) : null };
         if (e.ex) rec.ex = true;
         if (e.removeCover) { delete COV[newId]; delCover(newId); }
         else if (e.coverData) { COV[newId] = e.coverData; saveCover(newId); }
@@ -1724,6 +1833,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         if (!cy || !ui.edit) break;
         var ed = ui.edit, curl = cy.coverL || cy.cover, keep = coverIn(ed);
         ui.msg = (ui.convMsg || "") + applyCand(cy); ui.convMsg = "";
+        if (!cy.toc && cy.isbn) tocFill(ed, normIsbn(cy.isbn));
         if (ed.kind === "wish" || !curl) { reopen(); break; }
         if (keep) { ui.msg += " Conservé la portada que ya tenías."; reopen(); break; }
         ui.coverBusy = true; reopen();
@@ -1811,13 +1921,15 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         if (de) {
           var toEnd = pgTo > 0 ? pgTo : (mb.pages || mfrom);
           if (de !== ds) S.sessions.push({ rn: mrn, id: uid(), bookId: mb.id, start: tsOf(ds), sec: 0, from: mfrom, to: mfrom, man: true });
-          S.sessions.push({ rn: mrn, id: uid(), bookId: mb.id, start: tsOf(de), sec: msecs, from: Math.min(mfrom, toEnd), to: toEnd, man: true });
+          var mchs = chSaved(mb, Math.min(mfrom, toEnd), toEnd);
+          S.sessions.push({ rn: mrn, id: uid(), bookId: mb.id, start: tsOf(de), sec: msecs, from: Math.min(mfrom, toEnd), to: toEnd, man: true, chapters: mchs.length ? mchs : undefined });
           mb.page = Math.max(mfrom, toEnd); mb.status = "terminado"; mb.finished = tsOf(de); mb.dropped = false;
           persist(); closeSheet(); render(); toast("Libro registrado como terminado el " + de); break;
         }
         var mto = pgTo > 0 ? pgTo : mfrom;
         if (pgTo > 0 && mto <= mfrom) { toast("Anota una página mayor a la p. " + mfrom); break; }
-        S.sessions.push({ rn: mrn, id: uid(), bookId: mb.id, start: tsOf(ds), sec: msecs, from: mfrom, to: mto, man: true });
+        var mchs2 = chSaved(mb, mfrom, mto);
+        S.sessions.push({ rn: mrn, id: uid(), bookId: mb.id, start: tsOf(ds), sec: msecs, from: mfrom, to: mto, man: true, chapters: mchs2.length ? mchs2 : undefined });
         mb.page = mto;
         if (mb.pages && mto >= mb.pages) { mb.status = "terminado"; mb.finished = tsOf(ds); } else if (mb.status === "pendiente") mb.status = "leyendo";
         persist(); closeSheet(); render(); toast("Sesión guardada" + (msecs ? ": " + dur(msecs) : "")); break;
@@ -1910,7 +2022,8 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         if (isNaN(to) || to < 0) { toast("Escribe un número de página"); break; }
         if (bb && bb.pages && to > bb.pages) to = bb.pages;
         var secs = Math.round(t.acc / 1000);
-        S.sessions.push({ rn: (bookById(t.bookId) ? rnOf(bookById(t.bookId)) : 1), id: uid(), bookId: t.bookId, start: Date.now() - t.acc, sec: secs, from: t.from, to: to });
+        var tchs = bb ? chSaved(bb, t.from, to) : [];
+        S.sessions.push({ rn: (bookById(t.bookId) ? rnOf(bookById(t.bookId)) : 1), id: uid(), bookId: t.bookId, start: Date.now() - t.acc, sec: secs, from: t.from, to: to, chapters: tchs.length ? tchs : undefined });
         if (bb) {
           bb.page = to;
           if (bb.pages && to >= bb.pages) { bb.status = "terminado"; bb.finished = Date.now(); }
@@ -1940,6 +2053,31 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         var ws = S.words.filter(function (x) { return x.id === el.dataset.id; })[0], wn = parseInt($("#wpg").value, 10);
         if (ws) { ws.page = wn > 0 ? wn : 0; if (ui.result && ui.result.id === ws.id) ui.result.page = ws.page; persist(); }
         closeSheet(); render(); toast(ws && ws.page ? "Página guardada" : "Página quitada"); break;
+      case "ch-add": readEdit(); (ui.edit.chapters = ui.edit.chapters || []).push({ id: uid(), n: "", p: 0 }); bookSheet(); var chi = $("#chn" + (ui.edit.chapters.length - 1)); if (chi) chi.focus(); break;
+      case "ch-del": readEdit(); ui.edit.chapters.splice(+el.dataset.i, 1); bookSheet(); break;
+      case "ch-many": readEdit(); chManySheet(); break;
+      case "ch-gen":
+        var chn = Math.min(300, parseInt($("#chcount").value, 10) || 0);
+        if (chn < 1) { toast("Escribe cuántos capítulos tiene"); break; }
+        var chl = (ui.edit.chapters = ui.edit.chapters || []), ch0 = chl.length;
+        for (var chk = 1; chk <= chn; chk++) chl.push({ id: uid(), n: "Capítulo " + (ch0 + chk), p: 0 });
+        chShow(ch0); toast("Creé " + chn + " capítulos: escribe la página donde empieza cada uno"); break;
+      case "ch-use":
+        var chs = chParse($("#chtxt").value);
+        if (!chs.length) { toast("Pega el índice primero"); break; }
+        var chb = (ui.edit.chapters = ui.edit.chapters || []).length, chnp = chs.filter(function (c) { return !c.p; }).length;
+        ui.edit.chapters = ui.edit.chapters.concat(chs);
+        chShow(chb); toast("Agregué " + chs.length + " capítulos" + (chnp ? "; " + chnp + " sin página" : "")); break;
+      case "ch-back": bookSheet(); break;
+      case "ch-like": ui.chLikes = ui.chLikes || {}; ui.chLikes[el.dataset.id] = !ui.chLikes[el.dataset.id]; chRefresh(); break;
+      case "sess-ch-like":
+        var scs = S.sessions.filter(function (x) { return x.id === el.dataset.s; })[0], scc = scs && (scs.chapters || []).filter(function (c) { return c.id === el.dataset.c; })[0];
+        if (!scc) break;
+        scc.liked = !scc.liked; persist();
+        var scp = $("#sheet .panel"), sct = scp ? scp.scrollTop : 0;
+        if (ui.viewId) bookView(ui.viewId); else { readEdit(); bookSheet(); }
+        scp = $("#sheet .panel"); if (scp) scp.scrollTop = sct;
+        break;
       case "del-word": S.words = S.words.filter(function (w) { return w.id !== el.dataset.id; }); if (ui.result && ui.result.id === el.dataset.id) ui.result = null; persist(); render(); break;
     }
   }
@@ -2172,7 +2310,8 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     }
   });
   document.addEventListener("input", function (ev) {
-    if (ev.target.id === "msp") msHint();
+    if (ev.target.id === "msp") { msHint(); chRefresh(); }
+    if (ev.target.id === "endp") chRefresh();
     if (ev.target.id === "endp" && S.timer) { var eh = $("#endhint"), dd = (parseInt(ev.target.value, 10) || 0) - S.timer.from; if (eh) eh.textContent = dd > 0 ? "Leíste " + dd + (dd === 1 ? " página" : " páginas") + "." : "Aún no avanzas páginas."; }
     if (ev.target.tagName === "TEXTAREA" && ev.target.id !== "fgt" && ev.target.closest("#sheet")) fit(ev.target);
     if (ev.target.id === "dp") ui.qPage = ev.target.value;
@@ -2183,7 +2322,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     }
   });
   document.addEventListener("change", function (ev) {
-    if (ev.target.id === "msb") msHint();
+    if (ev.target.id === "msb" || ev.target.id === "mse") { msHint(); chRefresh(); }
     if (ev.target.id === "wbook") { ui.dictBook = ev.target.value; ui.result = null; ui.qPage = ""; if ($("#dp")) $("#dp").value = ""; }
     if (ev.target.id === "rsf" && ev.target.files && ev.target.files[0]) {
       var rr = new FileReader();
