@@ -1131,7 +1131,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   }
 
   /* ---------- app instalable y respaldo ---------- */
-  var LSI = "diario-lectura-install-hidden";
+  var LSI = "diario-lectura-install-hidden", APP_VERSION = 17;
   function standalone() { try { return matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; } catch (e) { return false; } }
   function iosHint() { return /iP(hone|ad|od)/.test(navigator.userAgent) && !standalone(); }
   function installOffer() { return !inClaude && !standalone() && (ui.installEvt || iosHint()); }
@@ -1147,7 +1147,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     h += '<h2 style="margin-top:28px">Copia de seguridad</h2><div class="card stack"><p class="msg" style="font-size:12.5px">Descarga un archivo con tus libros, sesiones, palabras, deseos, sagas y portadas. Sirve para pasar tus datos a otro dispositivo o a la app instalada.</p>';
     h += '<button class="btn block" data-act="backup">Descargar respaldo</button>';
     h += '<button class="btn ghost block" data-act="restore-pick">Restaurar desde archivo</button><input id="rsf" type="file" accept="application/json,.json" hidden></div>';
-    return h;
+    return h + '<p class="meta" style="text-align:center;margin:22px 0 0">Versión de la app: ' + APP_VERSION + "</p>";
   }
   function exportBackup() {
     var json = JSON.stringify({ app: "diario-lectura", v: 1, exported: Date.now(), data: S, covers: COV });
@@ -1252,11 +1252,15 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     h += row("Saga", esc(sagaTag(b)));
     var chLiked = {};
     S.sessions.forEach(function (x) { if (x.bookId === b.id) (x.chapters || []).forEach(function (c) { if (c.liked) chLiked[c.id] = 1; }); });
-    if ((b.chapters || []).length) h += row("Capítulos", b.chapters.length + (Object.keys(chLiked).length ? " · te gustaron " + Object.keys(chLiked).length + ' <span style="color:var(--star)">★</span>' : ""));
+    var chAll = b.chapters || [], chNoP = chAll.filter(function (c) { return !(c.p > 0); }).length;
+    if (!chAll.length) h += row("Capítulos", '<span class="meta">Sin registrar. Toca <b>Editar libro</b> y anota cada capítulo con la página donde empieza para verlos en tus sesiones.</span>');
+    else if (chNoP === chAll.length) h += row("Capítulos", chAll.length + ' <span class="meta" style="color:var(--warn)">· ninguno tiene página de inicio, por eso no aparecen en tus sesiones. Toca <b>Editar libro</b> y escribe la página donde empieza cada uno.</span>');
+    else h += row("Capítulos", chAll.length + (chNoP ? ' <span class="meta" style="color:var(--warn)">· ' + chNoP + " sin página de inicio</span>" : "") + (Object.keys(chLiked).length ? " · te gustaron " + Object.keys(chLiked).length + ' <span style="color:var(--star)">★</span>' : ""));
     h += row("Idioma", esc(b.lang)) + row("Publicación", esc(b.pub)) + row("Editorial", esc(b.editorial)) + row("Género", esc(b.genre)) + row("ISBN", isbnLabel(b.isbn)) + row("Año en el estante", String(yearOf(b)));
     h += row("Resumen", '<span style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(b.summary) + "</span>");
     if (b.status === "terminado" && b.notes) h += row("Notas y reseña", '<span style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(b.notes) + "</span>");
     h += prevReadsBlock(b) + sessionsBlock(id);
+    h += '<button class="btn block" data-act="open-book" data-id="' + esc(b.id) + '">Editar libro</button>';
     h += '<button class="btn ghost block" data-act="close">Cerrar</button></div>';
     openSheet("<h2 class='sr-only' style='position:absolute;left:-9999px'>Información del libro</h2>" + h);
   }
@@ -1350,6 +1354,8 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
       });
       h += "</div>";
     }
+    var noP = cs.filter(function (c) { return !(c.p > 0); }).length;
+    if (noP) h += '<p class="msg" style="color:var(--warn)">' + (noP === 1 ? "1 capítulo no tiene" : noP + " capítulos no tienen") + " página de inicio. Sin ella no se pueden ubicar en tus sesiones.</p>";
     return h + '<div class="row" style="flex-wrap:wrap;gap:6px;margin-top:4px"><button type="button" class="btn sm" data-act="ch-add">+ Capítulo</button><button type="button" class="btn sm ghost" data-act="ch-many">Agregar varios</button></div></div>';
   }
   function chReadForm(e) {
