@@ -187,6 +187,18 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
 .bars div.today { color: var(--ink); font-weight: 700; }
 .kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .kpi b { display: block; font-family: var(--display); font-weight: 400; font-size: 26.5px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+/* ventana flotante del cronómetro */
+#twin { position: fixed; left: max(12px, env(safe-area-inset-left, 0px)); right: max(12px, env(safe-area-inset-right, 0px)); bottom: calc(76px + env(safe-area-inset-bottom, 0px)); z-index: 15; pointer-events: none; }
+#twin > * { pointer-events: auto; }
+.tw { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; box-shadow: 0 10px 30px rgba(60, 20, 40, .28); padding: 10px 14px 12px; max-height: 60vh; overflow-y: auto; }
+.twhead { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.twt { min-width: 0; }
+.twt b { display: block; font-family: var(--display); font-weight: 400; font-size: 16.5px; line-height: 1.2; overflow-wrap: anywhere; }
+.twclock { font-family: var(--mono); font-weight: 500; font-size: 40px; text-align: center; margin: 2px 0 10px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.twclock.paused { color: var(--muted); }
+.twmini { display: inline-flex; align-items: center; gap: 8px; max-width: 62%; min-height: 46px; padding: 0 16px; border-radius: 99px; background: var(--ink); color: var(--bg); font-weight: 700; font-size: 13px; box-shadow: var(--shadow); }
+.twmini #fmini { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.twmini .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; opacity: .85; }
 #toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(96px + env(safe-area-inset-bottom, 0px)); z-index: 30; background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 99px; font-size: 12.5px; font-weight: 600; max-width: 90%; text-align: center; }
 /* librero */
 .seg { display: flex; background: var(--accent-soft); border-radius: 13px; padding: 3px; margin-bottom: 14px; }
@@ -360,6 +372,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   <button data-tab="palabras"><svg viewBox="0 0 24 24"><path d="M4 19l5-14 5 14M6 14h6"/><path d="M16 9h4M18 7v2c0 3-1 5-3 6M17 12c.6 1.4 1.8 2.6 3 3"/></svg>Diccionario</button>
   <button data-tab="resumen"><svg viewBox="0 0 24 24"><path d="M5 20V10M12 20V4M19 20v-7"/></svg>Resumen</button>
 </nav>
+<div id="twin"></div>
 <div id="sheet" hidden></div>
 <div id="toast" hidden></div>
 
@@ -525,6 +538,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     fab.dataset.book = "";
     var v = $("#view");
     v.innerHTML = ({ libros: vLibros, leer: vLeer, palabras: vPalabras, resumen: vResumen })[ui.tab]();
+    renderTimer();
     tick();
   }
 
@@ -884,10 +898,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     if (t) {
       var rb = bookById(t.bookId);
       h += "<p class='sub'>" + esc(rb ? rb.title : "Libro") + " · empezaste en la página " + t.from + "</p>";
-      h += '<div class="card clockbox"><div class="label" id="runLabel"></div><div class="clock" id="clock">00:00</div></div>';
-      h += '<div class="row" style="margin-top:14px">';
-      h += t.run ? '<button class="btn block" data-act="pause">Pausar</button>' : '<button class="btn block" data-act="resume">Continuar</button>';
-      h += '<button class="btn primary block" data-act="finish">Terminar</button></div>';
+      h += '<p class="msg">Pausa, termina y califica los capítulos desde la ventana del cronómetro' + (t.min ? ' <button type="button" class="pgb" data-act="tw-max">Abrir</button>' : "") + ".</p>";
       h += '<div class="row" style="margin-top:10px"><button class="btn ghost block" data-act="to-dict">Buscar palabra</button></div>';
       if (canNotify() && Notification.permission === "default") h += '<div class="note" style="margin-top:12px"><span>Activa las notificaciones para ver la sesión en tu barra de notificaciones y pausarla o terminarla desde ahí.</span><button data-act="notif-on">Activar</button></div>';
     } else {
@@ -1131,7 +1142,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   }
 
   /* ---------- app instalable y respaldo ---------- */
-  var LSI = "diario-lectura-install-hidden", APP_VERSION = 17;
+  var LSI = "diario-lectura-install-hidden", APP_VERSION = 18;
   function standalone() { try { return matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; } catch (e) { return false; } }
   function iosHint() { return /iP(hone|ad|od)/.test(navigator.userAgent) && !standalone(); }
   function installOffer() { return !inClaude && !standalone() && (ui.installEvt || iosHint()); }
@@ -1327,7 +1338,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     if (!b || !chRanges(b).length) return "";
     var list = chRead(b, from, to), likes = ui.chLikes || {};
     if (!list.length) return '<p class="msg">Al escribir la página donde te quedaste verás aquí los capítulos que leíste.</p>';
-    var h = '<div class="field"><span class="label">Capítulos que leíste · toca la estrella si te gustó</span><div class="chpick">';
+    var h = '<div class="field"><span class="label">Capítulos que leíste · ' + (ui.chCtx && ui.chCtx.confirm ? "confirma tus estrellas" : "toca la estrella si te gustó") + '</span><div class="chpick">';
     list.forEach(function (c) {
       var on = !!likes[c.id];
       h += '<div class="chrow"><span>' + esc(c.n) + (c.part ? ' <span class="meta">(una parte)</span>' : "") + '</span><button type="button" class="chstar' + (on ? " on" : "") + '" data-act="ch-like" data-id="' + esc(c.id) + '" aria-pressed="' + on + '" aria-label="Me gustó ' + esc(c.n) + '">' + (on ? "★" : "☆") + "</button></div>";
@@ -1424,7 +1435,8 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     var h = "<h2>¿Hasta qué página llegaste?</h2>";
     h += '<p class="meta" style="margin:0 0 12px">' + esc(b ? b.title : "Libro") + " · " + clock(ms) + " de lectura. Empezaste en la página " + t.from + ".</p>";
     h += '<div class="stack"><div class="field"><label class="label" for="endp">Página final</label><input id="endp" data-focus type="number" inputmode="numeric" min="0" value="' + t.from + '"></div><p class="msg" id="endhint">Aún no avanzas páginas.</p><div id="chlist"></div>';
-    ui.chLikes = {}; ui.chCtx = { bookId: function () { return t.bookId; }, from: function () { return t.from; }, input: "endp" };
+    ui.chLikes = {}; Object.keys(t.likes || {}).forEach(function (k) { if (t.likes[k]) ui.chLikes[k] = true; });
+    ui.chCtx = { bookId: function () { return t.bookId; }, from: function () { return t.from; }, input: "endp", confirm: true };
     h += '<button class="btn primary block" data-act="save-session">Guardar sesión</button>';
     h += '<button class="btn ghost block" data-act="close">Seguir leyendo</button>';
     h += '<button class="btn danger block" data-act="discard">Descartar sesión</button></div>';
@@ -2042,6 +2054,14 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         if (bk.status === "pendiente") bk.status = "leyendo";
         persist(); requestWake(); render(); break;
       case "notif-on": askNotify(true); break;
+      case "tw-min": if (S.timer) { S.timer.min = true; persist(); render(); } break;
+      case "tw-max": if (S.timer) { S.timer.min = false; persist(); render(); } break;
+      case "tw-like":
+        if (!S.timer) break;
+        var twl = (S.timer.likes = S.timer.likes || {});
+        twl[el.dataset.id] = !twl[el.dataset.id]; persist();
+        var twp = $("#twin .tw"), twt = twp ? twp.scrollTop : 0;
+        renderTimer(); tick(); twp = $("#twin .tw"); if (twp) twp.scrollTop = twt; break;
       case "pause": S.timer.acc += Date.now() - S.timer.run; S.timer.run = null; persist(); releaseWake(); render(); break;
       case "resume": S.timer.run = Date.now(); persist(); requestWake(); render(); break;
       case "finish":
@@ -2384,8 +2404,44 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     rsT = setTimeout(function () { if (ui.tab === "libros" && ui.view === "estante" && !ui.sheet) render(); }, 200);
   });
 
+  /* ---------- ventana flotante del cronómetro ---------- */
+  // Capítulos que faltan por leer desde donde empezó la sesión; el que contiene la página actual va "en curso".
+  function chPending(b, from) {
+    return chRanges(b).filter(function (r) { return r.e > from; }).map(function (r) { return { id: r.c.id, n: r.c.n, p: r.s, cur: r.s <= from }; });
+  }
+  function renderTimer() {
+    var box = $("#twin"), t = S.timer;
+    if (!box) return;
+    if (!t) { box.innerHTML = ""; document.body.style.paddingBottom = ""; return; }
+    var b = bookById(t.bookId), title = b ? b.title : "Libro";
+    if (t.min) {
+      box.innerHTML = '<button type="button" class="twmini" data-act="tw-max" aria-label="Abrir el cronómetro de ' + esc(title) + '">' + (t.run ? '<span class="pulse"></span>' : "⏸ ") + '<span id="fmini">00:00</span><span class="t">' + esc(title) + "</span></button>";
+      document.body.style.paddingBottom = "";
+      return;
+    }
+    var likes = t.likes || {}, pend = b ? chPending(b, t.from) : [];
+    var h = '<div class="tw" role="region" aria-label="Sesión de lectura"><div class="twhead"><div class="twt"><span class="label">' + (t.run ? '<span class="pulse"></span>Leyendo' : "En pausa") + " · desde la p. " + t.from + "</span><b>" + esc(title) + '</b></div><button type="button" class="x" data-act="tw-min" aria-label="Minimizar el cronómetro">▾</button></div>' +
+      '<div class="twclock" id="fclock">00:00</div><div class="row">' +
+      (t.run ? '<button class="btn block" data-act="pause">Pausar</button>' : '<button class="btn block" data-act="resume">Continuar</button>') +
+      '<button class="btn primary block" data-act="finish">Terminar</button></div>';
+    if (pend.length) {
+      h += '<div class="label" style="margin-top:12px">Capítulos por leer · toca la estrella si te gustó</div><div class="chpick">';
+      pend.forEach(function (c) {
+        var on = !!likes[c.id];
+        h += '<div class="chrow"><span>' + esc(c.n) + ' <span class="meta">' + (c.cur ? "(en curso)" : "p. " + c.p) + '</span></span><button type="button" class="chstar' + (on ? " on" : "") + '" data-act="tw-like" data-id="' + esc(c.id) + '" aria-pressed="' + on + '" aria-label="Me gustó ' + esc(c.n) + '">' + (on ? "★" : "☆") + "</button></div>";
+      });
+      h += "</div>";
+    } else if (b && (b.chapters || []).length && !chRanges(b).length) h += '<p class="msg" style="margin-top:10px">Los capítulos de este libro no tienen página de inicio; agrégala en “Editar libro” para calificarlos aquí.</p>';
+    box.innerHTML = h + "</div>";
+    var tw = box.firstChild;
+    document.body.style.paddingBottom = tw ? (tw.offsetHeight + 100) + "px" : "";
+  }
+
   function tick() {
-    var t = S.timer, c = $("#clock");
+    var t = S.timer, fc = $("#fclock"), fm = $("#fmini");
+    if (t && fc) { fc.textContent = clock(elapsed()); fc.classList.toggle("paused", !t.run); }
+    if (t && fm) fm.textContent = clock(elapsed());
+    var c = $("#clock");
     if (c && t) {
       c.textContent = clock(elapsed());
       c.classList.toggle("paused", !t.run);
