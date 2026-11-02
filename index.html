@@ -409,7 +409,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     return { v: 1, updated: d.updated || 0, books: books, sessions: sessions, words: words, wish: d.wish || [], sagas: d.sagas || [], timer: timer };
   }
   function loadCovers() { try { var r = localStorage.getItem(LSC); return r ? JSON.parse(r) : {}; } catch (e) { return {}; } }
-  function saveCoversLocal() { try { localStorage.setItem(LSC, JSON.stringify(COV)); } catch (e) {} }
+  function saveCoversLocal() { try { localStorage.setItem(LSC, JSON.stringify(COV)); } catch (e) {} if (typeof syncSchedule === "function") syncSchedule(); }
   function saveCover(id) {
     saveCoversLocal();
     if (coversRef) coversRef.doc(id).set({ img: COV[id] }).catch(function () { toast("La portada quedó solo en este teléfono."); });
@@ -422,6 +422,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     S.updated = Date.now();
     try { localStorage.setItem(LS, JSON.stringify(S)); } catch (e) {}
     timerNote();
+    syncSchedule();
     clearTimeout(saveT);
     saveT = setTimeout(flush, 500);
   }
@@ -1140,7 +1141,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   }
 
   /* ---------- app instalable y respaldo ---------- */
-  var LSI = "diario-lectura-install-hidden", APP_VERSION = 19;
+  var LSI = "diario-lectura-install-hidden", APP_VERSION = 20;
   function standalone() { try { return matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; } catch (e) { return false; } }
   function iosHint() { return /iP(hone|ad|od)/.test(navigator.userAgent) && !standalone(); }
   function installOffer() { return !inClaude && !standalone() && (ui.installEvt || iosHint()); }
@@ -1150,9 +1151,194 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     if (hidden || !installOffer()) return "";
     return '<div class="note"><span>' + installText() + '</span><span class="row" style="gap:2px">' + (ui.installEvt ? '<button data-act="install">Instalar</button>' : "") + '<button data-act="install-hide" aria-label="Ocultar aviso">✕</button></span></div>';
   }
+  /* ---------- cuenta de Google y sincronización (Firebase) ----------
+     Cada libro, sesión, palabra, deseo, saga y portada es un documento en users/<uid>/<colección>/<id> con
+     { v: JSON del elemento, u: fecha, del: borrado }. Se guarda una huella (hash) de lo último sincronizado
+     para subir solo lo que cambió y no pisar cambios locales que aún no se suben. */
+  var FB_CONFIG = {
+    apiKey: "AIzaSyA28gQTPWRevKEWRT__FcPINFIldIcXhoc",
+    authDomain: "diario-de-lectura-florinusual.firebaseapp.com",
+    projectId: "diario-de-lectura-florinusual",
+    storageBucket: "diario-de-lectura-florinusual.firebasestorage.app",
+    messagingSenderId: "31723804365",
+    appId: "1:31723804365:web:1ee94fcbd0812b23dbbb84"
+  };
+  var FB_JS = "https://www.gstatic.com/firebasejs/10.14.1/", LS_SYNC = "diario-lectura-sync", LS_SYNC_ON = "diario-lectura-sync-on", LS_PRE = "diario-lectura-antes-de-sincronizar";
+  var SYNC_COLLS = ["books", "sessions", "words", "wish", "sagas", "covers", "meta"];
+  var cloud = { loading: null, ready: false, user: null, db: null, unsubs: [], state: "off", err: "", last: 0, pushT: null };
+  function hashStr(str) {
+    var h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for (var i = 0, ch; i < str.length; i++) { ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36);
+  }
+  function syncOn() { try { return !!localStorage.getItem(LS_SYNC_ON); } catch (e) { return false; } }
+  function loadSnap() { try { return JSON.parse(localStorage.getItem(LS_SYNC) || "null"); } catch (e) { return null; } }
+  function saveSnap(s) { try { localStorage.setItem(LS_SYNC, JSON.stringify(s)); } catch (e) {} }
+  function userCol(c) { return cloud.db.collection("users").doc(cloud.user.uid).collection(c); }
+  function loadScript(src) {
+    return new Promise(function (ok, no) {
+      var s = document.createElement("script"); s.src = src; s.async = true;
+      s.onload = ok; s.onerror = function () { no({ code: "load" }); };
+      document.head.appendChild(s);
+    });
+  }
+  function loadFirebase() {
+    if (inClaude) return Promise.reject({ code: "claude" });
+    if (cloud.loading) return cloud.loading;
+    cloud.loading = loadScript(FB_JS + "firebase-app-compat.js").then(function () {
+      return Promise.all([loadScript(FB_JS + "firebase-auth-compat.js"), loadScript(FB_JS + "firebase-firestore-compat.js")]);
+    }).then(function () {
+      if (!firebase.apps.length) firebase.initializeApp(FB_CONFIG);
+      cloud.db = firebase.firestore();
+      return cloud.db.enablePersistence({ synchronizeTabs: true }).catch(function () {});
+    }).then(function () {
+      cloud.ready = true;
+      firebase.auth().onAuthStateChanged(function (u) { cloud.user = u || null; if (u) startSync(); else stopListen(); syncUi(); });
+      firebase.auth().getRedirectResult().catch(function (er) { cloud.err = authErr(er); syncUi(); });
+      syncUi();
+    });
+    cloud.loading.catch(function () { cloud.loading = null; });
+    return cloud.loading;
+  }
+  function authErr(er) {
+    var c = (er && er.code) || "";
+    if (/popup-closed-by-user|cancelled-popup-request/.test(c)) return "Cerraste la ventana de Google antes de terminar.";
+    if (/network-request-failed/.test(c)) return "Sin conexión. Conéctate a internet e intenta de nuevo.";
+    if (/unauthorized-domain/.test(c)) return "Falta agregar florinusual.github.io en Authentication → Configuración → Dominios autorizados de Firebase.";
+    if (/operation-not-allowed/.test(c)) return "El acceso con Google no está habilitado en Firebase (Authentication → Sign-in method).";
+    if (/popup-blocked/.test(c)) return "El teléfono bloqueó la ventana de Google. Intenta de nuevo.";
+    return "No se pudo iniciar sesión (" + (c || (er && er.message) || "error") + ").";
+  }
+  function syncUi() { if (ui.tab === "resumen" && !ui.sheet) render(); }
+  function syncText() {
+    if (navigator.onLine === false) return "Sin conexión: tus cambios se subirán cuando vuelva el internet.";
+    if (cloud.state === "connecting") return "Conectando…";
+    if (cloud.state === "pending") return "Subiendo cambios…";
+    if (cloud.state === "error") return cloud.err || "Hubo un problema al sincronizar.";
+    if (cloud.state === "ok") return "Sincronizado" + (cloud.last ? " · " + new Date(cloud.last).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" }) : "");
+    return "";
+  }
+  function curMaps() {
+    var m = {};
+    ["books", "sessions", "words", "wish", "sagas"].forEach(function (c) { m[c] = {}; (S[c] || []).forEach(function (x) { if (x && x.id) m[c][String(x.id)] = JSON.stringify(x); }); });
+    m.covers = {}; Object.keys(COV).forEach(function (k) { if (COV[k]) m.covers[k] = JSON.stringify({ img: COV[k] }); });
+    m.meta = { timer: JSON.stringify({ t: S.timer || null }) };
+    return m;
+  }
+  function applyItem(c, id, v) {
+    var x = v === null ? null : JSON.parse(v);
+    if (c === "covers") { if (x && x.img) COV[id] = x.img; else delete COV[id]; return; }
+    if (c === "meta") { if (id === "timer") S.timer = x ? x.t || null : null; return; }
+    var arr = S[c] = S[c] || [], i = arr.map(function (y) { return String(y.id); }).indexOf(id);
+    if (x === null) { if (i > -1) arr.splice(i, 1); }
+    else if (i > -1) arr[i] = x; else arr.push(x);
+  }
+  function startSync() {
+    try { localStorage.setItem(LS_SYNC_ON, "1"); } catch (e) {}
+    cloud.state = "connecting"; cloud.err = ""; syncUi();
+    var snap = loadSnap();
+    (snap && snap.uid === cloud.user.uid ? Promise.resolve() : firstMerge()).then(function () { listen(); syncPush(); })
+      .catch(function (er) { cloud.state = "error"; cloud.err = "No pude sincronizar (" + ((er && (er.code || er.message)) || "error") + ")."; syncUi(); });
+  }
+  /* Primera vez en este dispositivo: copia de seguridad local, luego se juntan los datos de la nube y los del teléfono. */
+  function firstMerge() {
+    try { localStorage.setItem(LS_PRE, JSON.stringify({ at: Date.now(), data: S })); } catch (e) {}
+    var uid = cloud.user.uid, snap = { uid: uid, c: {} }, local = curMaps();
+    return Promise.all(SYNC_COLLS.map(function (c) {
+      return userCol(c).get().then(function (qs) {
+        snap.c[c] = {};
+        qs.forEach(function (d) {
+          var x = d.data();
+          if (!x || x.del || typeof x.v !== "string") return;
+          snap.c[c][d.id] = hashStr(x.v);
+          var take = c === "meta" ? (d.id === "timer" && !S.timer) : !(d.id in local[c]);
+          if (take) applyItem(c, d.id, x.v);
+        });
+      });
+    })).then(function () {
+      if (!cloud.user || cloud.user.uid !== uid) return;
+      saveSnap(snap);
+      try { localStorage.setItem(LS, JSON.stringify(S)); } catch (e) {}
+      saveCoversLocal(); render();
+    });
+  }
+  function stopListen() { cloud.unsubs.forEach(function (f) { try { f(); } catch (e) {} }); cloud.unsubs = []; }
+  function listen() {
+    stopListen();
+    var uid = cloud.user.uid;
+    SYNC_COLLS.forEach(function (c) {
+      cloud.unsubs.push(userCol(c).onSnapshot(function (qs) {
+        var snap = loadSnap(); if (!snap || snap.uid !== uid) return;
+        var sc = snap.c[c] = snap.c[c] || {}, cur = null, ch = false;
+        qs.docChanges().forEach(function (dc) {
+          var d = dc.doc; if (d.metadata && d.metadata.hasPendingWrites) return;
+          var x = d.data() || {}, del = dc.type === "removed" || x.del || typeof x.v !== "string", rh = del ? null : hashStr(x.v);
+          if (rh === (sc[d.id] || null)) return;
+          cur = cur || curMaps();
+          var lh = cur[c][d.id] !== undefined ? hashStr(cur[c][d.id]) : null;
+          if (lh !== (sc[d.id] || null)) return; // hay un cambio local sin subir: gana el de este dispositivo
+          applyItem(c, d.id, del ? null : x.v);
+          if (rh) sc[d.id] = rh; else delete sc[d.id];
+          ch = true;
+        });
+        if (ch) {
+          saveSnap(snap);
+          try { localStorage.setItem(LS, JSON.stringify(S)); } catch (e) {}
+          if (c === "covers") saveCoversLocal();
+          if (c === "meta") { if (S.timer && S.timer.run) requestWake(); else releaseWake(); }
+          render();
+        }
+        if (!qs.metadata.fromCache && cloud.state !== "pending") { cloud.state = "ok"; cloud.last = Date.now(); syncUi(); }
+      }, function (er) { cloud.state = "error"; cloud.err = "No pude recibir cambios de la nube (" + ((er && er.code) || "error") + ")."; syncUi(); }));
+    });
+  }
+  function syncSchedule() { if (!cloud || !cloud.user) return; clearTimeout(cloud.pushT); cloud.pushT = setTimeout(syncPush, 1200); }
+  function syncPush() {
+    if (!cloud.user || !cloud.db) return;
+    var snap = loadSnap(); if (!snap || snap.uid !== cloud.user.uid) return;
+    var cur = curMaps(), ops = [], now = Date.now();
+    Object.keys(cur).forEach(function (c) {
+      var sc = snap.c[c] = snap.c[c] || {};
+      Object.keys(cur[c]).forEach(function (id) { var h = hashStr(cur[c][id]); if (sc[id] !== h) { ops.push([c, id, { v: cur[c][id], u: now, del: false }]); sc[id] = h; } });
+      Object.keys(sc).forEach(function (id) { if (!(id in cur[c])) { ops.push([c, id, { u: now, del: true }]); delete sc[id]; } });
+    });
+    if (!ops.length) return;
+    saveSnap(snap);
+    cloud.state = "pending"; syncUi();
+    var commits = [];
+    for (var i = 0; i < ops.length; i += 100) {
+      var b = cloud.db.batch();
+      ops.slice(i, i + 100).forEach(function (o) { b.set(userCol(o[0]).doc(o[1]), o[2]); });
+      commits.push(b.commit());
+    }
+    Promise.all(commits).then(function () { cloud.state = "ok"; cloud.last = Date.now(); syncUi(); }).catch(function (er) {
+      // Se marca para reintentar en la próxima subida.
+      var s2 = loadSnap(); if (s2 && s2.c) { ops.forEach(function (o) { (s2.c[o[0]] = s2.c[o[0]] || {})[o[1]] = "reintentar"; }); saveSnap(s2); }
+      cloud.state = "error"; cloud.err = "No pude subir tus cambios (" + ((er && er.code) || "error") + "). Se reintentará.";
+      syncUi();
+    });
+  }
+  function syncCard() {
+    var h = '<h2 style="margin-top:28px">Cuenta y sincronización</h2><div class="card stack">';
+    if (cloud.user) {
+      h += '<p class="msg" style="font-size:12.5px">Sincronizando con <b>' + esc(cloud.user.email || "tu cuenta de Google") + "</b>. Tus datos se guardan en tu nube y aparecen en todos los dispositivos donde inicies sesión.</p>";
+      h += '<p class="meta"' + (cloud.state === "error" ? ' style="color:var(--warn)"' : "") + ">" + esc(syncText()) + "</p>";
+      h += '<button class="btn ghost block" data-act="sync-out">Cerrar sesión</button>';
+    } else {
+      if (!cloud.ready && navigator.onLine !== false) loadFirebase().catch(function () { syncUi(); });
+      h += '<p class="msg" style="font-size:12.5px">Inicia sesión con tu cuenta de Google para guardar tus datos en la nube y verlos en todos tus dispositivos. Lo que tienes en este teléfono se sube y no se borra nada.</p>';
+      if (cloud.err) h += '<p class="meta" style="color:var(--warn)">' + esc(cloud.err) + "</p>";
+      h += '<button class="btn primary block" data-act="sync-in"' + (cloud.ready ? "" : " disabled") + ">" + (cloud.ready ? "Iniciar sesión con Google" : navigator.onLine === false ? "Conéctate a internet para iniciar sesión" : cloud.loading ? "Preparando…" : "Toca para reintentar") + "</button>";
+    }
+    return h + "</div>";
+  }
+
   function appBlock() {
     var h = "";
     if (installOffer()) h += '<h2 style="margin-top:28px">Instalar</h2><div class="card stack"><p class="msg" style="font-size:12.5px">' + installText() + "</p>" + (ui.installEvt ? '<button class="btn primary block" data-act="install">Instalar app</button>' : "") + "</div>";
+    if (!inClaude) h += syncCard();
     h += '<h2 style="margin-top:28px">Copia de seguridad</h2><div class="card stack"><p class="msg" style="font-size:12.5px">Descarga un archivo con tus libros, sesiones, palabras, deseos, sagas y portadas. Sirve para pasar tus datos a otro dispositivo o a la app instalada.</p>';
     h += '<button class="btn block" data-act="backup">Descargar respaldo</button>';
     h += '<button class="btn ghost block" data-act="restore-pick">Restaurar desde archivo</button><input id="rsf" type="file" accept="application/json,.json" hidden></div>';
@@ -2065,6 +2251,20 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         if (bk.status === "pendiente") bk.status = "leyendo";
         persist(); requestWake(); render(); break;
       case "notif-on": askNotify(true); break;
+      case "sync-in":
+        if (!cloud.ready) { loadFirebase().catch(function () { syncUi(); }); render(); break; }
+        cloud.err = "";
+        var gp = new firebase.auth.GoogleAuthProvider(); gp.setCustomParameters({ prompt: "select_account" });
+        firebase.auth().signInWithPopup(gp).catch(function (er) {
+          if (er && /popup-blocked|operation-not-supported-in-this-environment/.test(er.code || "")) { try { localStorage.setItem(LS_SYNC_ON, "1"); } catch (e2) {} return firebase.auth().signInWithRedirect(gp); }
+          cloud.err = authErr(er); syncUi();
+        });
+        break;
+      case "sync-out":
+        stopListen(); clearTimeout(cloud.pushT);
+        try { localStorage.removeItem(LS_SYNC); localStorage.removeItem(LS_SYNC_ON); } catch (e3) {}
+        if (window.firebase && firebase.auth) firebase.auth().signOut().catch(function () {});
+        cloud.user = null; cloud.state = "off"; render(); toast("Sesión cerrada. Tus datos siguen en este teléfono."); break;
       case "tw-min": if (S.timer) { S.timer.min = true; persist(); render(); } break;
       case "tw-max": if (S.timer) { S.timer.min = false; persist(); render(); } break;
       case "tw-like":
@@ -2499,7 +2699,10 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   }
   if (/[?&]leer=1/.test(location.search)) { ui.tab = "leer"; try { history.replaceState(null, "", location.pathname); } catch (e) {} }
 
+  if (!inClaude && syncOn()) loadFirebase().catch(function () {});
   if (!inClaude) {
+    window.addEventListener("online", function () { if (cloud.user) syncSchedule(); syncUi(); });
+    window.addEventListener("offline", syncUi);
     if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
       window.addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () {}); });
       navigator.serviceWorker.addEventListener("message", function (ev) { timerEvent(ev.data); });

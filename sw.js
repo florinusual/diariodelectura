@@ -1,5 +1,5 @@
 /* Service worker del Diario de Lectura: guarda la app para abrirla sin conexión. */
-var VERSION = "diario-v19";
+var VERSION = "diario-v20";
 var SHELL = ["./", "index.html", "manifest.webmanifest", "icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png", "icons/apple-touch-icon.png"];
 var FONTS = "diario-fonts";
 var PENDING = "diario-pending";
@@ -28,8 +28,8 @@ self.addEventListener("fetch", function (ev) {
     return;
   }
 
-  // Tipografías de Google: de la caché, y se refrescan en segundo plano.
-  if (url.hostname === "fonts.googleapis.com" || url.hostname === "fonts.gstatic.com") {
+  // Tipografías de Google y librerías de Firebase: de la caché, y se refrescan en segundo plano.
+  if (url.hostname === "fonts.googleapis.com" || url.hostname === "fonts.gstatic.com" || (url.hostname === "www.gstatic.com" && url.pathname.indexOf("/firebasejs/") === 0)) {
     ev.respondWith(caches.open(FONTS).then(function (c) {
       return c.match(req).then(function (hit) {
         var net = fetch(req).then(function (res) { if (res.ok || res.type === "opaque") c.put(req, res.clone()); return res; }).catch(function () { return hit; });
