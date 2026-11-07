@@ -421,7 +421,6 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   function persist() {
     S.updated = Date.now();
     try { localStorage.setItem(LS, JSON.stringify(S)); } catch (e) {}
-    timerNote();
     syncSchedule();
     clearTimeout(saveT);
     saveT = setTimeout(flush, 500);
@@ -580,7 +579,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   function bookCard(b) {
     return '<button class="card book" data-act="open-book" data-id="' + esc(b.id) + '">' + spine(b) + '<div style="flex:1;min-width:0">' +
       '<div class="btitle">' + esc(b.title) + "</div>" +
-      '<div class="bauthor">' + esc(b.author || "Autor sin registrar") + (sagaTag(b) ? " · " + esc(sagaTag(b)) : "") + "</div>" +
+      '<div class="bauthor">' + esc(b.author || "Autor sin registrar") + (sagaTag(b) ? " · " + esc(sagaTag(b)) : "") + (b.format ? " · " + esc(b.format) : "") + "</div>" +
       '<div class="bar" style="margin:9px 0 5px"><i style="width:' + pct(b) + '%"></i></div>' +
       '<div class="row spread"><span class="meta">' + (b.pages ? "p. " + b.page + " de " + b.pages + " · " + pct(b) + "%" : "p. " + b.page) + (b.dropped ? " · Abandonado" : "") + "</span>" + (b.rating ? stars(b.rating, false) : "") + "</div></div></button>";
   }
@@ -896,7 +895,6 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
       h += "<p class='sub'>" + esc(rb ? rb.title : "Libro") + " · empezaste en la página " + t.from + "</p>";
       h += '<p class="msg">Pausa, termina y califica los capítulos desde la ventana del cronómetro' + (t.min ? ' <button type="button" class="pgb" data-act="tw-max">Abrir</button>' : "") + ".</p>";
       h += '<div class="row" style="margin-top:10px"><button class="btn ghost block" data-act="to-dict">Buscar palabra</button></div>';
-      if (canNotify() && Notification.permission === "default") h += '<div class="note" style="margin-top:12px"><span>Activa las notificaciones para ver la sesión en tu barra de notificaciones y pausarla o terminarla desde ahí.</span><button data-act="notif-on">Activar</button></div>';
     } else {
       h += "<p class='sub'>Toca el cronómetro de un libro para empezar. Al terminar anotas hasta qué página llegaste.</p>";
     }
@@ -1141,7 +1139,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   }
 
   /* ---------- app instalable y respaldo ---------- */
-  var LSI = "diario-lectura-install-hidden", APP_VERSION = 20;
+  var LSI = "diario-lectura-install-hidden", APP_VERSION = 21;
   function standalone() { try { return matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; } catch (e) { return false; } }
   function iosHint() { return /iP(hone|ad|od)/.test(navigator.userAgent) && !standalone(); }
   function installOffer() { return !inClaude && !standalone() && (ui.installEvt || iosHint()); }
@@ -1464,7 +1462,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     if (!chAll.length) h += row("Capítulos", '<span class="meta">Sin registrar. Toca <b>Editar libro</b> y anota cada capítulo con la página donde empieza para verlos en tus sesiones.</span>');
     else if (chNoP === chAll.length) h += row("Capítulos", chAll.length + ' <span class="meta" style="color:var(--warn)">· ninguno tiene página de inicio, por eso no aparecen en tus sesiones. Toca <b>Editar libro</b> y escribe la página donde empieza cada uno.</span>');
     else h += row("Capítulos", chAll.length + (chNoP ? ' <span class="meta" style="color:var(--warn)">· ' + chNoP + " sin página de inicio</span>" : "") + (Object.keys(chLiked).length ? " · te gustaron " + Object.keys(chLiked).length + ' <span style="color:var(--star)">★</span>' : ""));
-    h += row("Idioma", esc(b.lang)) + row("Publicación", esc(b.pub)) + row("Editorial", esc(b.editorial)) + row("Género", esc(b.genre)) + row("ISBN", isbnLabel(b.isbn)) + row("Año en el estante", String(yearOf(b)));
+    h += row("Formato", esc(b.format)) + row("Idioma", esc(b.lang)) + row("Publicación", esc(b.pub)) + row("Editorial", esc(b.editorial)) + row("Género", esc(b.genre)) + row("ISBN", isbnLabel(b.isbn)) + row("Año en el estante", String(yearOf(b)));
     if (b.summary) h += row("Resumen", '<span style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(b.summary) + "</span>");
     if (b.status === "terminado" && b.notes) h += row("Notas y reseña", '<span style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(b.notes) + "</span>");
     h += prevReadsBlock(b) + sessionsBlock(id);
@@ -1479,6 +1477,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     h += idBlock(e, true);
     h += '<div class="grid2"><div class="field"><label class="label" for="bp">Páginas</label><input id="bp" type="number" inputmode="numeric" min="0" value="' + (e.pages || "") + '"></div>' +
       '<div class="field"><label class="label" for="bc">Página actual</label><input id="bc" type="number" inputmode="numeric" min="0" value="' + (e.page || 0) + '"></div></div>';
+    h += formatField(e);
     h += chaptersField(e);
     h += infoMeta(e);
     h += sagaFields(e);
@@ -1518,6 +1517,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
     if ($("#bgn")) e.genre = $("#bgn").value.trim();
     if ($("#brs")) e.summary = $("#brs").value;
     if ($("#bn")) e.notes = $("#bn").value;
+    if ($("#bfm")) e.format = $("#bfm").value;
     chReadForm(e);
   }
 
@@ -1551,6 +1551,13 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   function chSaved(b, from, to) {
     var likes = ui.chLikes || {};
     return chRead(b, from, to).map(function (c) { return { id: c.id, n: c.n, part: c.part, liked: !!likes[c.id] }; });
+  }
+  /* Formato en que se lee el libro. */
+  var FORMATS = ["Kindle", "Libro de bolsillo", "Digital", "Audiolibro"];
+  function formatField(e) {
+    var h = '<div class="field"><label class="label" for="bfm">Formato</label><select id="bfm"><option value="">Sin indicar</option>';
+    FORMATS.forEach(function (f) { h += '<option value="' + esc(f) + '"' + (e.format === f ? " selected" : "") + ">" + esc(f) + "</option>"; });
+    return h + "</select></div>";
   }
   function chaptersField(e) {
     var cs = e.chapters || [], h = '<div class="field"><span class="label">Capítulos' + (cs.length ? " · " + cs.length : "") + "</span>";
@@ -1927,7 +1934,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
         if (e.pages && e.page >= e.pages) e.status = "terminado";
         var newId = e.id || uid();
         var hasCover = e.removeCover ? false : (e.coverData ? true : !!e.cover);
-        var rec = { id: newId, chapters: chClean(e.chapters), isbn: normIsbn(e.isbn), cover: hasCover, spine: e.spine || "", ccolor: e.ccolor || "", sagaId: e.sagaId || "", vol: e.vol || 0, year: e.year || 0, lang: e.lang || "", pub: e.pub || "", editorial: e.editorial || "", genre: e.genre || "", summary: e.summary || "", frags: (bookById(newId) || {}).frags || [], reads: (bookById(newId) || {}).reads || [], rn: (bookById(newId) || {}).rn || 1, title: e.title.trim(), author: e.author.trim(), pages: e.pages, page: e.page, status: e.status, rating: e.rating, dropped: e.status === "terminado" ? !!e.dropped : false, color: e.color, notes: e.notes, added: e.added || Date.now(), finished: e.status === "terminado" ? (e.finished || Date.now()) : null };
+        var rec = { id: newId, format: e.format || "", chapters: chClean(e.chapters), isbn: normIsbn(e.isbn), cover: hasCover, spine: e.spine || "", ccolor: e.ccolor || "", sagaId: e.sagaId || "", vol: e.vol || 0, year: e.year || 0, lang: e.lang || "", pub: e.pub || "", editorial: e.editorial || "", genre: e.genre || "", summary: e.summary || "", frags: (bookById(newId) || {}).frags || [], reads: (bookById(newId) || {}).reads || [], rn: (bookById(newId) || {}).rn || 1, title: e.title.trim(), author: e.author.trim(), pages: e.pages, page: e.page, status: e.status, rating: e.rating, dropped: e.status === "terminado" ? !!e.dropped : false, color: e.color, notes: e.notes, added: e.added || Date.now(), finished: e.status === "terminado" ? (e.finished || Date.now()) : null };
         if (e.ex) rec.ex = true;
         if (e.removeCover) { delete COV[newId]; delCover(newId); }
         else if (e.coverData) { COV[newId] = e.coverData; saveCover(newId); }
@@ -2246,11 +2253,9 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
       case "start-card":
         if (S.timer) { toast("Ya hay una sesión en curso"); break; }
         var bk = bookById(el.dataset.id); if (!bk) break;
-        askNotify();
         S.timer = { bookId: bk.id, from: bk.page || 0, acc: 0, run: Date.now() };
         if (bk.status === "pendiente") bk.status = "leyendo";
         persist(); requestWake(); render(); break;
-      case "notif-on": askNotify(true); break;
       case "sync-in":
         if (!cloud.ready) { loadFirebase().catch(function () { syncUi(); }); render(); break; }
         cloud.err = "";
@@ -2665,18 +2670,13 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
   setInterval(tick, 1000);
 
   /* ---------- cronómetro en la barra de notificaciones ---------- */
-  var lastNote = "";
-  function canNotify() { return !inClaude && "serviceWorker" in navigator && "Notification" in window && !!window.ServiceWorkerRegistration && "showNotification" in ServiceWorkerRegistration.prototype; }
-  function askNotify(force) {
-    if (!canNotify() || Notification.permission !== "default") { if (force && canNotify() && Notification.permission === "denied") toast("Las notificaciones están bloqueadas. Actívalas en los ajustes del teléfono para esta app."); return; }
-    try { var pr = Notification.requestPermission(function () { lastNote = ""; timerNote(); if (ui.tab === "leer" && !ui.sheet) render(); }); if (pr && pr.then) pr.then(function () { lastNote = ""; timerNote(); if (ui.tab === "leer" && !ui.sheet) render(); }); } catch (e) {}
-  }
-  function timerNote() {
-    if (!canNotify() || Notification.permission !== "granted") return;
-    var t = S.timer, b = t && bookById(t.bookId), d = t ? { title: b ? b.title : "tu libro", run: t.run || null, acc: t.acc || 0 } : null, sig = JSON.stringify(d);
-    if (sig === lastNote) return;
-    lastNote = sig;
-    navigator.serviceWorker.ready.then(function (reg) { if (reg.active) reg.active.postMessage({ type: "timer-draw", data: d }); }).catch(function () {});
+  /* Las notificaciones del cronómetro se quitaron: en iPhone se duplicaban y no se podían borrar.
+     Se cierran las que hayan quedado de versiones anteriores. */
+  function clearTimerNotes() {
+    if (inClaude || !("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.ready.then(function (reg) {
+      if (reg.getNotifications) reg.getNotifications().then(function (ns) { ns.forEach(function (n) { if (!n.tag || n.tag === "timer") n.close(); }); }).catch(function () {});
+    }).catch(function () {});
   }
   /* Botones de la notificación: llegan como mensaje si la app está abierta, o se aplican al abrirla. */
   function timerEvent(m) {
@@ -2707,7 +2707,7 @@ h2 { font-family: var(--display); font-weight: 400; font-size: 18.5px; margin: 0
       window.addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () {}); });
       navigator.serviceWorker.addEventListener("message", function (ev) { timerEvent(ev.data); });
       takePending();
-      timerNote();
+      clearTimerNotes();
       document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") takePending(); });
     }
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {}); } catch (e) {}
